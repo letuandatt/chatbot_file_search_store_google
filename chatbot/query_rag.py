@@ -23,7 +23,6 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
-
 # ==============================================================================
 # SECTION 1: KHỞI TẠO CÁC THÀNH PHẦN TOÀN CỤC (GLOBAL COMPONENTS)
 # ==============================================================================
@@ -139,36 +138,39 @@ def format_chat_history(history):
     return "\n\n".join(formatted_parts)
 
 
-def extract_citations(response):
-    """Trích xuất và format nguồn trích dẫn từ response metadata, giống test_query.py."""
-    citations_str = "\n\n--- Nguồn trích dẫn ---\n"
+def extract_citations(response, show_details=False):
+    """Trích xuất và format nguồn trích dẫn từ response metadata.
+
+    Args:
+        response: Response từ Google AI
+        show_details: Nếu True, hiển thị thêm thông tin chi tiết (số đoạn trích dẫn)
+    """
     try:
         metadata = response.candidates[0].grounding_metadata
         if not (metadata and metadata.grounding_supports and metadata.grounding_chunks):
             return ""  # Không có trích dẫn
 
         all_chunks = metadata.grounding_chunks
-        citations_by_file = {}
+        file_citation_count = {}
 
+        # Đếm số lượng trích dẫn cho mỗi file
         for support in metadata.grounding_supports:
-            segment_text = support.segment.text
             for chunk_index in support.grounding_chunk_indices:
                 if 0 <= chunk_index < len(all_chunks):
                     chunk = all_chunks[chunk_index]
                     filename = chunk.retrieved_context.title
-                    if filename not in citations_by_file:
-                        citations_by_file[filename] = set()
-                    citations_by_file[filename].add(segment_text)
+                    file_citation_count[filename] = file_citation_count.get(filename, 0) + 1
 
-        if not citations_by_file:
+        if not file_citation_count:
             return ""
 
-        for filename, segments in citations_by_file.items():
-            citations_str += f"Nguồn: {filename}\n"
-            citations_str += "-" * 20 + "\n"
-            for segment in segments:
-                citations_str += f"{segment}\n"
-            citations_str += "\n"
+        # Format phần citations
+        citations_str = "\n\n--- 📚 Nguồn tham khảo ---\n"
+        for filename, count in file_citation_count.items():
+            if show_details:
+                citations_str += f"📄 {filename} (trích dẫn {count} đoạn)"
+            else:
+                citations_str += f"📄 {filename}"
 
         return citations_str
     except Exception as e:
@@ -196,123 +198,108 @@ def save_session_message(session_id, user_id, question, answer, image_path=None)
                     filename=os.path.basename(image_path),
                     metadata={
                         "session_id": session_id,
-                        "created_at": now,
-                        "updated_at": now
+                        "user_id": user_id,
+                        "upload_time": now
                     }
                 )
-        except Exception as ex:
-            print(f"Lỗi khi lưu ảnh vào GridFS: {ex}")
+        except Exception as img_ex:
+            print(f"Lỗi khi lưu ảnh vào GridFS: {img_ex}")
 
-    new_messages = [
-        {
-            "role": "user",
-            "content": question,
-            "image_gridfs_id": str(image_gridfs_id) if image_gridfs_id else None,
-            "timestamp": now
-        },
-        {
-            "role": "assistant",
-            "content": answer,
-            "timestamp": datetime.now(VN_TZ).isoformat()
-        }
-    ]
+    message_data = {
+        "question": question,
+        "answer": answer,
+        "image_gridfs_id": str(image_gridfs_id) if image_gridfs_id else None,
+        "timestamp": now
+    }
 
     coll.update_one(
-        {"session_id": session_id, "user_id": user_id},
+        {"session_id": session_id},
         {
-            "$push": {"messages": {"$each": new_messages}},
-            "$set": {"updated_at": datetime.now(VN_TZ).isoformat()},
-            "$setOnInsert": {  # <-- Chỉ set các trường này khi TẠO MỚI
+            "$push": {"messages": message_data},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {
+                "user_id": user_id,
                 "created_at": now
             }
         },
-        upsert=True  # <-- Tự động tạo nếu chưa có
+        upsert=True
     )
 
 
-def load_session_messages(session_id: str, user_id: str, max_history_message: int = 50):
-    """Load lịch sử hội thoại từ MongoDB."""
-    coll = get_mongo_collection("sessions")
-    fs_client = FS
-    if coll is None or fs_client is None:
-        return InMemoryChatMessageHistory()
-
-    history = InMemoryChatMessageHistory()
-
-    try:
-        session_doc = coll.find_one(
-            {"session_id": session_id, "user_id": user_id},
-            projection={"messages": {"$slice": -max_history_message}}
-        )
-
-        if not session_doc:
-            print(f"DEBUG: Session {session_id} not found or doesn't belong to user {user_id}")
-            return history
-
-        for msg in session_doc.get("messages", []):
-            if msg["role"] == "user":
-                image_gridfs_id_str = msg.get("image_gridfs_id")
-                content_list = [{"type": "text", "text": msg["content"]}]
-                if image_gridfs_id_str:
-                    try:
-                        image_id = ObjectId(image_gridfs_id_str)
-                        image_data = fs_client.get(image_id)  # Dùng fs_client
-                        image_base64 = base64.b64encode(image_data.read()).decode("utf-8")
-                        content_list.append(
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}} )
-                    except Exception as ex:
-                        print(f"Lỗi khi tải ảnh từ GridFS (ID: {image_gridfs_id_str}): {ex}")
-                history.add_message(HumanMessage(content=content_list))
-            elif msg["role"] == "assistant":
-                history.add_message(AIMessage(content=msg["content"]))
-            else:
-                print(f"⚠️ Unknown role: {msg['role']}")
-    except Exception as e:
-        print(f"Lỗi khi tải session ({session_id}) từ MongoDB: {e}")
-        # Trả về history rỗng để tránh crash
-        return InMemoryChatMessageHistory()
-
-    return history
-
-
-def list_sessions(user_id: str, limit=50):
-    """Liệt kê các session (đã tối ưu) mà không tải messages."""
-    coll = get_mongo_collection("sessions")
+def load_session_messages(session_id, user_id, limit=100):
+    """Load messages của session cụ thể theo user_id."""
+    coll = get_mongo_collection()
     if coll is None:
+        return InMemoryChatMessageHistory()
+    session = coll.find_one({"session_id": session_id, "user_id": user_id})
+    if session and "messages" in session:
+        memory = InMemoryChatMessageHistory()
+        for msg in session["messages"][-limit:]:
+            question = msg.get("question", "")
+            answer = msg.get("answer", "")
+            if question:
+                memory.add_message(HumanMessage(content=question))
+            if answer:
+                memory.add_message(AIMessage(content=answer))
+        return memory
+    return InMemoryChatMessageHistory()
+
+
+def list_sessions(limit=20, user_id=None):
+    """Lấy danh sách session từ MongoDB, lọc theo user_id nếu có."""
+    coll = get_mongo_collection()
+    if coll is None:
+        print("Lỗi: MongoDB chưa kết nối.")
         return []
+    query = {"user_id": user_id} if user_id else {}
+    sessions = coll.find(query, projection={"session_id": 1, "created_at": 1, "updated_at": 1, "user_id": 1,
+                                            "messages": 1}).sort("updated_at", DESCENDING).limit(limit)
+    result_list = []
+    for s in sessions:
+        num_msgs = len(s.get("messages", []))
+        result_list.append({"session_id": s["session_id"], "created_at": s.get("created_at", "N/A"),
+                            "updated_at": s.get("updated_at", "N/A"), "user_id": s.get("user_id", "N/A"),
+                            "num_messages": num_msgs})
+    return result_list
 
-    pipeline = [
-        {
-            "$match": {"user_id": user_id}
-        },
-        {
-            "$project": {  # Chỉ lấy các trường này
-                "_id": 0,
-                "session_id": 1,
-                "session_name": 1,
-                "updated_at": 1,
-                "created_at": 1,
-                "num_messages": {"$size": "$messages"}  # Yêu cầu DB đếm
-            }
-        },
-        {
-            "$sort": {"updated_at": DESCENDING}
-        },
-        {
-            "$limit": limit  # Chỉ lấy 50 session gần nhất
-        }
-    ]
 
+def list_documents_by_user(user_id: str, limit: int = 50):
+    coll = DB_DOCUMENTS_COLLECTION
+    if coll is None:
+        print("Lỗi: MongoDB chưa kết nối.")
+        return []
     try:
-        sessions = list(coll.aggregate(pipeline))
-        return sessions
+        docs_cursor = coll.find(
+            {"user_id": user_id},
+            projection={
+                "_id": 1,
+                "session_id": 1,
+                "filename": 1,
+                "created_at": 1,
+                "status": 1,
+                "file_store_name": 1,
+                "file_hash": 1
+            }
+        ).sort("created_at", DESCENDING).limit(limit)
+        documents = []
+        for doc in docs_cursor:
+            documents.append({
+                "id": str(doc["_id"]),
+                "session_id": doc.get("session_id", "N/A"),
+                "filename": doc.get("filename", "N/A"),
+                "created_at": doc.get("created_at", "N/A"),
+                "status": doc.get("status", "N/A"),
+                "file_store_name": doc.get("file_store_name", ""),
+                "file_hash": doc.get("file_hash", "")
+            })
+        return documents
     except Exception as e:
-        print(f"Lỗi khi list sessions: {e}")
+        print(f"Lỗi khi lấy danh sách documents theo user: {e}")
         return []
 
-# --- (Các hàm quản lý file giữ nguyên, chúng ĐÃ ĐÚNG) ---
+
 def get_session_file_store(session_id: str) -> str | None:
-    # (Giữ nguyên)
+    """LẤY FILE STORE CỦA SESSION - FIXED: Kiểm tra None trước khi dùng"""
     coll = DB_DOCUMENTS_COLLECTION
     if coll is None:
         return None
@@ -321,8 +308,11 @@ def get_session_file_store(session_id: str) -> str | None:
             {"session_id": session_id, "status": "processed"},
             projection={"file_store_name": 1}
         )
-        return doc_record.get("file_store_name") if doc_record else None
-    except Exception:
+        if doc_record and "file_store_name" in doc_record:
+            return doc_record.get("file_store_name")
+        return None
+    except Exception as e:
+        print(f"Lỗi khi lấy session file store: {e}")
         return None
 
 
@@ -339,59 +329,55 @@ def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str) -> str | No
     if fs_client is None or coll is None:
         print("Lỗi: Không thể lưu file, DB hoặc GridFS chưa kết nối.")
         return None
-
-    now = datetime.now(VN_TZ).isoformat()
-    file_name = os.path.basename(file_path)
-    file_hash = compute_file_hash(file_path)  # ✅ thêm dòng này
-
     try:
-        with open(file_path, "rb") as f:
-            file_id = fs_client.put(
-                f,
-                filename=file_name,
-                metadata={
-                    "session_id": session_id,
-                    "user_id": user_id,
-                    "file_hash": file_hash,
-                    "created_at": now
-                }
+        file_hash = compute_file_hash(file_path)
+        # Kiểm tra file đã tồn tại và xử lý xong chưa
+        existing = coll.find_one({"file_hash": file_hash, "user_id": user_id, "status": "processed"})
+        if existing:
+            print(f"File đã được tải lên và xử lý. File Store: {existing.get('file_store_name')}")
+            coll.update_one(
+                {"_id": existing["_id"]},
+                {"$addToSet": {"sessions": session_id}}
             )
-
-        doc_record = {
-            "session_id": session_id,
+            return str(existing["_id"])
+        now = datetime.now(VN_TZ).isoformat()
+        with open(file_path, "rb") as f:
+            file_id = fs_client.put(f, filename=os.path.basename(file_path))
+        doc_data = {
             "user_id": user_id,
-            "filename": file_name,
-            "gridfs_id": str(file_id),
-            "file_hash": file_hash,  # ✅ thêm vào đây
+            "session_id": session_id,
+            "sessions": [session_id],
+            "filename": os.path.basename(file_path),
+            "file_gridfs_id": str(file_id),
+            "file_hash": file_hash,
             "created_at": now,
             "status": "uploaded"
         }
-        coll.insert_one(doc_record)
-        print(f"Đã lưu file '{file_name}' vào GridFS (ID: {file_id}) và collection 'documents'.")
-        return str(file_id)
+        result = coll.insert_one(doc_data)
+        print(f"Đã lưu file vào DB với document ID: {result.inserted_id}")
+        return str(result.inserted_id)
     except Exception as e:
-        print(f"Lỗi khi lưu file PDF vào MongoDB: {e}")
+        print(f"Lỗi khi lưu file vào DB: {e}")
         return None
 
 
 def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
     """
-
-    :param file_path:
-    :param session_id:
-    :param user_id:
-    :return:
+    Upload PDF lên Google File Search Tool, tạo File Store tự động cho session.
     """
-    if DB_DOCUMENTS_COLLECTION is None or GLOBAL_GENAI_CLIENT is None:
+    coll = DB_DOCUMENTS_COLLECTION
+    client = GLOBAL_GENAI_CLIENT
+    if coll is None or client is None:
+        print("Lỗi: Thiếu MongoDB hoặc Google AI client.")
         return
 
-    client = GLOBAL_GENAI_CLIENT
     file_name = os.path.basename(file_path)
-    print(f"Bắt đầu xử lý và tải file lên Google: {file_name}")
+    print(f"Đang xử lý file {file_name} với Google File Search Tool...")
+
     try:
-        print(f"Đang tạo File Store mới cho session {session_id}...")
+        store_display_name = f"session-store-{session_id[:16]}-{uuid.uuid4().hex[:12]}"
         file_store = client.file_search_stores.create(
-            config={'display_name': f"Session Store - {session_id} - {file_name}"}
+            config={'display_name': store_display_name}
         )
         store_name = file_store.name
         print(f"Tạo thành công File Store: {store_name}")
@@ -449,33 +435,40 @@ def delete_session_and_associated_files(session_id: str, user_id: str) -> dict:
                         gridfs_ids_to_delete.append(ObjectId(msg["image_gridfs_id"]))
                     except Exception:
                         pass
-        doc_records = list(docs_coll.find({"session_id": session_id, "user_id": user_id}))
+            session_delete = sessions_coll.delete_one({"_id": session_doc["_id"]})
+            deleted_counts["sessions"] = session_delete.deleted_count
+            print(f"Đã xóa session '{session_id}' khỏi collection 'sessions'.")
+    except Exception as e:
+        print(f"Lỗi khi xóa session: {e}")
+
+    try:
+        doc_records = docs_coll.find({"session_id": session_id, "user_id": user_id})
         for doc in doc_records:
-            if doc.get("gridfs_id"):
+            if doc.get("file_gridfs_id"):
                 try:
-                    gridfs_ids_to_delete.append(ObjectId(doc["gridfs_id"]))
+                    gridfs_ids_to_delete.append(ObjectId(doc["file_gridfs_id"]))
                 except Exception:
                     pass
             if doc.get("file_store_name"):
                 file_store_names_to_delete.add(doc["file_store_name"])
+        doc_delete = docs_coll.delete_many({"session_id": session_id, "user_id": user_id})
+        deleted_counts["document_records"] = doc_delete.deleted_count
+        print(f"Đã xóa {deleted_counts['document_records']} document records của session.")
     except Exception as e:
-        print(f"Lỗi khi thu thập ID: {e}")
+        print(f"Lỗi khi xóa document records: {e}")
 
-    for file_id in set(gridfs_ids_to_delete):
+    for gf_id in gridfs_ids_to_delete:
         try:
-            fs_client.delete(file_id); deleted_counts["gridfs_files"] += 1
-        except Exception:
-            pass
-
-    deleted_counts["sessions"] = sessions_coll.delete_one({"session_id": session_id, "user_id": user_id}).deleted_count
-    deleted_counts["document_records"] = docs_coll.delete_many({"session_id": session_id, "user_id": user_id}).deleted_count
+            fs_client.delete(gf_id)
+            deleted_counts["gridfs_files"] += 1
+        except Exception as e:
+            print(f"Lỗi khi xóa GridFS file {gf_id}: {e}")
 
     for store_name in file_store_names_to_delete:
         try:
-            print(f"Đang xóa File Store: {store_name}...")
             client.file_search_stores.delete(name=store_name)
             deleted_counts["file_stores"] += 1
-            print(f"Đã xóa {store_name}.")
+            print(f"Đã xóa File Store: {store_name}")
         except Exception as e:
             print(f"Lỗi khi xóa File Store {store_name}: {e}")
     return deleted_counts
@@ -600,73 +593,44 @@ def create_rag_router_chain(llm):
     def get_history_for_request(session_id: str, user_id: str):
         return get_session_history(session_id, user_id)
 
-    # --- Router chain với format history ---
-    router_chain = (
-        {
-            "file_status": lambda x: x["file_status"],
-            "chat_history": lambda x: format_chat_history(x.get("chat_history", [])),
-            "question": lambda x: x["question"]
-        }
-        | ROUTER_PROMPT_TEMPLATE
-        | llm
-        | StrOutputParser()
-    )
+    # --- Chain nhánh cơ sở (History Path, Fallback) ---
+    history_chain = HISTORY_PROMPT_TEMPLATE | llm | StrOutputParser()
+    base_llm_chain = FALLBACK_PROMPT_TEMPLATE | llm | StrOutputParser()
 
-    # --- History chain với format ---
-    history_chain = (
-        {
-            "question": lambda x: x["question"],
-            "chat_history": lambda x: format_chat_history(x.get("chat_history", []))
-        }
-        | HISTORY_PROMPT_TEMPLATE
-        | llm
-        | StrOutputParser()
-    )
-
-    # --- Fallback chain với format ---
-    base_llm_chain = (
-        {
-            "question": lambda x: x["question"],
-            "chat_history": lambda x: format_chat_history(x.get("chat_history", []))
-        }
-        | FALLBACK_PROMPT_TEMPLATE
-        | llm
-        | StrOutputParser()
-    )
-
-    # --- Logic Route (ĐÃ SỬA ĐỂ DÙN SDK THÔ VÀ INVOKE NGAY) ---
+    # --- Logic Route (MỚI) ---
     def route(input_dict, config=None):
         session_id = config["configurable"]["session_id"]
+        user_id = config["configurable"]["user_id"]
+        question = input_dict["question"]
+        chat_history = input_dict["chat_history"]
 
-        # 1. Kiểm tra tình trạng file
+        # FIXED: Kiểm tra user ownership của session
+        if not check_session_belongs_to_user(session_id, user_id):
+            return "Lỗi: Session không thuộc về user này."
+
+        # --- 1. DETECT INTENT ---
+        file_status = "Không có tài liệu cụ thể"
         user_file_store_name = get_session_file_store(session_id)
-        file_status = "Người dùng đã tải lên 1 file." if user_file_store_name else "Người dùng CHƯA tải lên file nào."
-
-        # 2. Chạy router
-        try:
-            classification = router_chain.invoke({
-                "chat_history": input_dict.get("chat_history", []),
-                "question": input_dict["question"],
-                "file_status": file_status
-            }, config)
-        except Exception as e:
-            classification = "rag_query"
-
-        # 3. Trả về chain tương ứng (INVOKE NGAY)
-        if "history_query" in classification:
-            print("--- (Router: Lịch sử) ---")
-            return history_chain.invoke(input_dict)
-
-        # 4. Xác định store_name để sử dụng (ƯU TIÊN SESSION NẾU CÓ)
-        store_to_use = None
         if user_file_store_name:
+            file_status = f"Người dùng đã tải lên tài liệu cho session này (Store: {user_file_store_name})"
+
+        file_keywords = ["file", "tài liệu", "tập tin", "pdf", "vừa tải", "đã tải", "upload", "đọc file"]
+        is_file_question = any(kw.lower() in question.lower() for kw in file_keywords)
+
+        # Route qua file store nếu có từ khóa file VÀ có file store
+        if is_file_question and user_file_store_name:
             print(f"--- (Router: File Search - Session Store: {user_file_store_name}) ---")
             store_to_use = user_file_store_name
-        elif app_config.CUSC_MAIN_STORE_NAME:
-            print(f"--- (Router: File Search - Main Store: {app_config.CUSC_MAIN_STORE_NAME}) ---")
+        elif not is_file_question and app_config.CUSC_MAIN_STORE_NAME:
+            # Câu hỏi chung - dùng main store
+            print(f"--- (Router: General RAG - Main Store: {app_config.CUSC_MAIN_STORE_NAME}) ---")
             store_to_use = app_config.CUSC_MAIN_STORE_NAME
-
-        if not store_to_use:
+        elif is_file_question and not user_file_store_name:
+            # User hỏi về file nhưng chưa upload
+            print("--- (Router: User hỏi về file nhưng chưa upload) ---")
+            return "Bạn chưa tải lên tài liệu nào cho session này. Vui lòng tải file PDF trước khi hỏi."
+        else:
+            # Không có store nào - trả lời bình thường
             print("--- (Router: Không có File Store - Trả lời bình thường) ---")
             return base_llm_chain.invoke(input_dict)
 
@@ -681,6 +645,10 @@ def create_rag_router_chain(llm):
             }).to_string()
 
             try:
+                # FIXED: Kiểm tra GLOBAL_GENAI_CLIENT không phải None
+                if GLOBAL_GENAI_CLIENT is None:
+                    return "Lỗi: Google AI client chưa được khởi tạo."
+
                 response = GLOBAL_GENAI_CLIENT.models.generate_content(
                     model=app_config.TEXT_MODEL_NAME,
                     contents=prompt_text,
@@ -694,7 +662,12 @@ def create_rag_router_chain(llm):
                         ]
                     ),
                 )
-                text_response = response.text
+                # FIXED: Kiểm tra response và response.text tồn tại
+                if response and hasattr(response, 'text'):
+                    text_response = response.text if response.text else "Không thể tạo câu trả lời."
+                else:
+                    text_response = "Không thể tạo câu trả lời."
+
                 citations = extract_citations(response)
                 return text_response + citations
             except Exception as e:
@@ -704,9 +677,9 @@ def create_rag_router_chain(llm):
 
     # --- Chain cơ sở có router (Giữ nguyên) ---
     base = (
-        {"question": lambda x: x["question"],
-         "chat_history": lambda x: x.get("chat_history", [])}
-        | RunnableLambda(route)
+            {"question": lambda x: x["question"],
+             "chat_history": lambda x: x.get("chat_history", [])}
+            | RunnableLambda(route)
     )
 
     # --- Bọc bộ nhớ (Giữ nguyên) ---
@@ -733,9 +706,51 @@ def create_vision_chain(llm):
     # --- Logic Route (MỚI - INVOKE NGAY) ---
     def route_vision(input_dict, config=None):
         session_id = config["configurable"]["session_id"]
+        user_id = config["configurable"]["user_id"]
+
+        # FIXED: Kiểm tra user ownership của session
+        if not check_session_belongs_to_user(session_id, user_id):
+            return "Lỗi: Session không thuộc về user này."
 
         history = input_dict.get("chat_history", [])
-        human_message_input = input_dict["question"]
+        # FIXED: Xử lý cả HumanMessage và image_path
+        if "image_path" in input_dict:
+            # Input từ CLI với image_path
+            image_path = input_dict["image_path"]
+            question_text = input_dict["question"]
+
+            # Kiểm tra file ảnh tồn tại
+            if not os.path.exists(image_path):
+                return f"Lỗi: Không tìm thấy ảnh tại '{image_path}'"
+
+            image_base64 = image_to_base64(image_path)
+            if not image_base64:
+                return "Lỗi: Không thể xử lý ảnh."
+        else:
+            # Input từ API/chain với HumanMessage
+            human_message_input = input_dict["question"]
+
+            # Extract question_text và image_base64 từ HumanMessage
+            question_text = ""
+            image_base64 = None
+            image_parts = []
+
+            if hasattr(human_message_input, 'content'):
+                content = human_message_input.content
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                question_text = part.get("text", "")
+                            elif part.get("type") == "image_url":
+                                url = part["image_url"].get("url", "")
+                                if url.startswith("data:image/jpeg;base64,"):
+                                    image_base64 = url.split(",")[1]
+                                image_parts.append(part)
+                else:
+                    question_text = content
+            else:
+                question_text = str(human_message_input)
 
         # 1. CHỌN TOOL RAG (ƯU TIÊN SESSION NẾU CÓ)
         store_to_use = None
@@ -750,31 +765,11 @@ def create_vision_chain(llm):
         else:
             print("--- (Vision: Không có File Store) ---")
 
-        # 2. Extract question_text và image_base64 (SAFE CHECK)
-        question_text = ""
-        image_base64 = None
-        image_parts = []
-        if hasattr(human_message_input, 'content'):
-            content = human_message_input.content
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            question_text = part.get("text", "")
-                        elif part.get("type") == "image_url":
-                            url = part["image_url"].get("url", "")
-                            if url.startswith("data:image/jpeg;base64,"):
-                                image_base64 = url.split(",")[1]
-                            image_parts.append(part)  # Giữ nguyên cho langchain
-            else:
-                question_text = content
-        else:
-            # Fallback nếu là str
-            question_text = str(human_message_input)
-            image_base64 = None
-
         if not question_text:
             return "Lỗi: Không có câu hỏi."
+
+        if not image_base64:
+            return "Lỗi: Không tìm thấy ảnh."
 
         history_str = format_chat_history(history)
         prompt_text = VISION_PROMPT_TEMPLATE.invoke({
@@ -783,127 +778,84 @@ def create_vision_chain(llm):
         }).to_string()
 
         if store_to_use:
-            # Raw SDK với tool và citations (INVOKE NGAY)
-            def raw_vision_func(inputs):
-                # Re-extract vì inputs giống input_dict (SAFE CHECK)
-                hm_input = inputs["question"]
-                img_b64 = None
-                q_text = ""
-                if hasattr(hm_input, 'content'):
-                    content = hm_input.content
-                    if isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, dict):
-                                if part.get("type") == "text":
-                                    q_text = part.get("text", "")
-                                elif part.get("type") == "image_url":
-                                    url = part["image_url"].get("url", "")
-                                    if url.startswith("data:image/jpeg;base64,"):
-                                        img_b64 = url.split(",")[1]
-                                    break
-                    else:
-                        q_text = content
-                else:
-                    # Fallback nếu str
-                    q_text = str(hm_input)
-                    img_b64 = None
-
-                if not img_b64:
-                    return "Lỗi: Không tìm thấy ảnh."
-
-                hist_str = format_chat_history(inputs["chat_history"])
-
-                p_text = VISION_PROMPT_TEMPLATE.invoke({
-                    "question": q_text,
-                    "chat_history": hist_str,
-                }).to_string()
+            # Raw SDK với tool và citations
+            try:
+                # FIXED: Kiểm tra GLOBAL_GENAI_CLIENT
+                if GLOBAL_GENAI_CLIENT is None:
+                    return "Lỗi: Google AI client chưa được khởi tạo."
 
                 contents = [
-                    types.Part(text=p_text),
+                    types.Part(text=prompt_text),
                     types.Part(
                         inline_data=types.Blob(
                             mime_type="image/jpeg",
-                            data=base64.b64decode(img_b64)
+                            data=base64.b64decode(image_base64)
                         )
                     )
                 ]
 
-                try:
-                    tool_config = types.GenerateContentConfig(
-                        tools=[
-                            types.Tool(
-                                file_search=types.FileSearch(
-                                    file_search_store_names=[store_to_use]
-                                )
+                tool_config = types.GenerateContentConfig(
+                    tools=[
+                        types.Tool(
+                            file_search=types.FileSearch(
+                                file_search_store_names=[store_to_use]
                             )
-                        ]
-                    )
-                    response = GLOBAL_GENAI_CLIENT.models.generate_content(
-                        model=app_config.VISION_MODEL_NAME,
-                        contents=contents,
-                        config=tool_config
-                    )
-                    text_response = response.text
-                    citations = extract_citations(response)
-                    return text_response + citations
-                except Exception as e:
-                    return f"Lỗi khi tạo nội dung: {str(e)}"
-
-            return raw_vision_func(input_dict)
-        else:
-            # LangChain không tool (INVOKE NGAY)
-            def langchain_vision_func(inputs):
-                hm_input = inputs["question"]
-                # Extract (SAFE CHECK)
-                q_text = ""
-                img_parts = []
-                if hasattr(hm_input, 'content'):
-                    content = hm_input.content
-                    if isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, dict):
-                                if part.get("type") == "text":
-                                    q_text = part.get("text", "")
-                                elif part.get("type") == "image_url":
-                                    img_parts.append(part)
-                    else:
-                        q_text = content
+                        )
+                    ]
+                )
+                response = GLOBAL_GENAI_CLIENT.models.generate_content(
+                    model=app_config.VISION_MODEL_NAME,
+                    contents=contents,
+                    config=tool_config
+                )
+                # FIXED: Kiểm tra response
+                if response and hasattr(response, 'text'):
+                    text_response = response.text if response.text else "Không thể tạo câu trả lời."
                 else:
-                    q_text = str(hm_input)
+                    text_response = "Không thể tạo câu trả lời."
 
-                hist_str = format_chat_history(inputs["chat_history"])
-                p_text = VISION_PROMPT_TEMPLATE.invoke({
-                    "question": q_text,
-                    "chat_history": hist_str,
-                }).to_string()
-
-                final_content = [{"type": "text", "text": p_text}] + img_parts
+                citations = extract_citations(response)
+                return text_response + citations
+            except Exception as e:
+                return f"Lỗi khi tạo nội dung: {str(e)}"
+        else:
+            # LangChain không tool
+            try:
+                # Tạo HumanMessage với cả text và image
+                final_content = [
+                    {"type": "text", "text": prompt_text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+                ]
                 final_hm = HumanMessage(content=final_content)
+                response = VISION_LLM.invoke(final_hm)
+                return response.content if hasattr(response, 'content') else str(response)
+            except Exception as e:
+                return f"Lỗi khi tạo nội dung: {str(e)}"
 
-                try:
-                    response = VISION_LLM.invoke(final_hm)
-                    return response.content
-                except Exception as e:
-                    return f"Lỗi khi tạo nội dung: {str(e)}"
-
-            return langchain_vision_func(input_dict)
-
-    # --- Các hàm helper cho bộ nhớ (Giữ nguyên) ---
+    # --- Các hàm helper cho bộ nhớ ---
     def _format_history_input(input_dict):
-        question = input_dict["question"]
-        img_path = input_dict["image_path"]
-        image_base64 = image_to_base64(img_path)
-        if not image_base64: return HumanMessage(content=f"(Lỗi ảnh) {question}")
-        image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-        return HumanMessage(content=[{"type": "text", "text": question}, image_data])
+        # FIXED: Xử lý cả trường hợp có image_path
+        if "image_path" in input_dict:
+            question = input_dict["question"]
+            img_path = input_dict["image_path"]
+            if not os.path.exists(img_path):
+                return HumanMessage(content=f"(Lỗi ảnh) {question}")
+            image_base64 = image_to_base64(img_path)
+            if not image_base64:
+                return HumanMessage(content=f"(Lỗi ảnh) {question}")
+            image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+            return HumanMessage(content=[{"type": "text", "text": question}, image_data])
+        else:
+            # Trường hợp đã có HumanMessage
+            return input_dict["question"]
 
     def get_history_for_request(session_id: str, user_id: str):
         return get_session_history(session_id, user_id)
 
-    # --- Chain cơ sở (MỚI) ---
+    # --- Chain cơ sở ---
     base_vision = RunnableLambda(route_vision)
 
-    # --- Bọc bộ nhớ (Giữ nguyên) ---
+    # --- Bọc bộ nhớ ---
     vision_chain_with_history = RunnableWithMessageHistory(
         base_vision,
         get_history_for_request,
@@ -930,7 +882,6 @@ VISION_CHAIN_WITH_HISTORY = create_vision_chain(VISION_LLM)
 # SECTION 5: CÁC HÀM XỬ LÝ CLI (COMMAND-LINE INTERFACE)
 # ==============================================================================
 
-# (Các hàm này giữ nguyên, chúng không cần thay đổi)
 def handle_text_query(query_text, user_id, session_id="default_session"):
     print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
     chain_to_run = RAG_CHAIN_WITH_HISTORY
@@ -1042,4 +993,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  # Mai vào Grok copy rồi sửa logic (vision + file pdf)
+    main()
