@@ -13,8 +13,9 @@ def set_global_genai(client):
 
 def _clean_stores(stores: list[str]):
     """
-    Validate store names quickly. If GLOBAL_GENAI_CLIENT available, try to validate remotely.
-    Keep conservative: if check fails, simply filter out empty names.
+    CHỈ dùng để tìm kiếm trong các FILE DO NGƯỜI DÙNG TẢI LÊN trong phiên làm việc hiện tại.
+    Sử dụng tool này khi câu hỏi liên quan đến dữ liệu riêng tư, báo cáo cụ thể, hoặc user nói "trong file tôi vừa gửi", "tóm tắt file này".
+    NẾU câu hỏi mang tính chất quy định chung, quy trình chuẩn của tổ chức -> HÃY DÙNG tool_search_general_policy thay thế.
     """
     if not stores:
         return []

@@ -13,8 +13,10 @@ def set_global_genai(client):
 @tool
 def tool_search_general_policy(query: str):
     """
-    Search in the configured MAIN store (app_config.CUSC_MAIN_STORE_NAME).
-    Uses Google GenAI file_search tool to retrieve passages and returns a concise summary + citations.
+    Dùng để tra cứu các QUY ĐỊNH CHUNG, QUY TRÌNH, THỦ TỤC, BIỂU MẪU, HƯỚNG DẪN của tổ chức (CUSC).
+    Sử dụng tool này khi câu hỏi chứa các từ khóa: "quy trình", "thủ tục", "quy định", "ISO", "hướng dẫn", "biểu mẫu", "TT" (thông tư/thủ tục).
+    Ví dụ: "Quy trình kiểm định", "Quy định nghỉ phép", "Biểu mẫu báo cáo", "Thủ tục TT07".
+    KHÔNG dùng tool này để tìm kiếm thông tin trong file người dùng tự upload (CV, báo cáo cá nhân...).
     """
     if not app_config.CUSC_MAIN_STORE_NAME:
         return "Hệ thống chưa được cấu hình Main Store."
