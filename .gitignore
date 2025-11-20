@@ -1,3 +1,8 @@
+__pycache__
 chatbot/data
 chatbot/.env
 chatbot/__pycache__
+chatbot/core/__pycache__
+chatbot/llm/__pycache__
+chatbot/router/__pycache__
+chatbot/tools/__pycache__
