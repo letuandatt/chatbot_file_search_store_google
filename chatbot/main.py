@@ -1,103 +1,91 @@
-"""
-Entry point for chatbot_v3 (CLI). Wires GenAI client, tools, agent, vision chain.
-Minimal CLI for testing.
-"""
 import os
 import uuid
-import base64
 import google.genai as genai
-
+from bson.objectid import ObjectId
 from chatbot.config import config as app_config
-from chatbot.core.file_store import save_pdf_to_mongo, process_and_vectorize_pdf, get_session_file_stores
-from chatbot.core.history import save_session_message, list_sessions, get_session_history
-from chatbot.core.utils import image_to_base64
+
+# Core Imports
+from chatbot.core.db import init_db, DB_DOCUMENTS_COLLECTION
+from chatbot.core.history import list_sessions, get_session_history, save_session_message
+from chatbot.core.file_store import save_pdf_to_mongo, process_and_vectorize_pdf
+
+# Services & Router
+from chatbot.services.vision_service import VisionService
 from chatbot.router.dispatcher import build_rag_agent
-from chatbot.llm.llm_vision import create_vision_llm
 
-import chatbot.tools.tool_search_policy as tool_policy
-import chatbot.tools.tool_search_uploaded as tool_uploaded
 
-# Init GenAI client
-GLOBAL_GENAI_CLIENT = None
-try:
-    GLOBAL_GENAI_CLIENT = genai.Client(api_key=app_config.GOOGLE_API_KEY)
-    print("[main] Google GenAI client initialized.")
-except Exception as e:
-    print(f"[main] Failed to init Google GenAI client: {e}")
-    GLOBAL_GENAI_CLIENT = None
+# --- SERVICE CONTAINER ---
+class AppContainer:
+    """
+    Quản lý khởi tạo Client và các Service (Singleton-like)
+    """
 
-# inject client into tools
-try:
-    tool_policy.set_global_genai(GLOBAL_GENAI_CLIENT)
-    tool_uploaded.set_global_genai(GLOBAL_GENAI_CLIENT)
-except Exception:
-    pass
+    def __init__(self):
+        init_db()
+        try:
+            self.genai_client = genai.Client(api_key=app_config.GOOGLE_API_KEY)
+            print("[App] GenAI Client Initialized.")
+        except Exception as e:
+            print(f"[App] GenAI Client Init Failed: {e}")
+            self.genai_client = None
 
-# Build agent
-RAG_AGENT_EXECUTOR, TEXT_LLM = build_rag_agent(GLOBAL_GENAI_CLIENT)
+        # Init Vision Service
+        self.vision_service = VisionService(self.genai_client)
 
-# Vision LLM (optional)
-VISION_LLM = create_vision_llm()
+        # Init Agent
+        if self.genai_client:
+            self.agent_executor, self.text_llm = build_rag_agent(self.genai_client)  #
+        else:
+            self.agent_executor = None
 
+
+# Khởi tạo App toàn cục
+APP = AppContainer()
+
+
+# --- HELPER FUNCTIONS ---
 def handle_pdf_upload(pdf_path: str, session_id: str, user_id: str):
     print(f"[main] Uploading file for session {session_id} ...")
-    file_id = save_pdf_to_mongo(pdf_path, session_id, user_id)
+    file_id = save_pdf_to_mongo(pdf_path, session_id, user_id)  #
     if not file_id:
         print("[main] save failed.")
         return
-    # fetch doc to check id (simple)
-    from core.db import DB_DOCUMENTS_COLLECTION
+
+    # Check status
     try:
-        doc = DB_DOCUMENTS_COLLECTION.find_one({"_id": __import__('bson').objectid.ObjectId(file_id)})
+        doc = DB_DOCUMENTS_COLLECTION.find_one({"_id": ObjectId(file_id)})
     except Exception:
         doc = None
+
     if doc and doc.get("status") == "processed":
         print("[main] File already processed.")
     else:
-        process_and_vectorize_pdf(pdf_path, session_id, str(doc["_id"]), GLOBAL_GENAI_CLIENT)
+        # Sử dụng Client từ APP Container
+        process_and_vectorize_pdf(pdf_path, session_id, str(doc["_id"]), APP.genai_client)  #
         print("[main] Processed and created file store.")
 
-def handle_text_query(query_text: str, user_id: str, session_id: str = "default_session"):
+
+def handle_text_query(query_text: str, user_id: str, session_id: str):
     print("--- Processing by RAG Agent ---")
-    agent = RAG_AGENT_EXECUTOR
-    if agent is None:
-        print("Agent unavailable.")
+    if not APP.agent_executor:
+        print("Agent not ready.")
         return
     try:
-        res = agent.invoke({"question": query_text}, config={"configurable": {"session_id": session_id, "user_id": user_id}})
+        # Gọi Agent Executor từ APP Container
+        res = APP.agent_executor.invoke(
+            {"question": query_text},
+            config={"configurable": {"session_id": session_id, "user_id": user_id}}
+        )
         full_response = res.get("output", "Không có phản hồi.") if isinstance(res, dict) else str(res)
-        print(f"\nAnswer:\n{full_response}\n")
-        save_session_message(session_id, user_id, query_text, full_response)
+        print(f"\n🤖 Bot: {full_response}\n")
+
+        # Lưu tin nhắn (Agent ReAct đôi khi cần lưu thủ công phần Final Answer)
+        save_session_message(session_id, user_id, query_text, full_response)  #
     except Exception as e:
         print(f"[main] Agent error: {e}")
 
-def handle_multimodal_query(query_text: str, image_path: str, user_id: str, session_id: str):
-    if not os.path.exists(image_path):
-        print("Image not found.")
-        return
-    image_b64 = image_to_base64(image_path)
-    if not image_b64:
-        print("Image processing failed.")
-        return
-    # Basic vision pipeline (use raw genai SDK for image)
-    if GLOBAL_GENAI_CLIENT and app_config.VISION_MODEL_NAME:
-        try:
-            from google.genai import types
-            response = GLOBAL_GENAI_CLIENT.models.generate_content(
-                model=app_config.VISION_MODEL_NAME,
-                contents=[
-                    types.Part(text=query_text),
-                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=base64.b64decode(image_b64)))
-                ],
-            )
-            text = "".join(p.text for p in response.candidates[0].content.parts if hasattr(p, "text"))
-            print(text)
-            save_session_message(session_id, user_id, query_text, text)
-        except Exception as e:
-            print(f"Vision processing error: {e}")
-    else:
-        print("Vision LLM not available.")
 
+# --- MAIN FUNCTION (UPDATED) ---
 def main():
     print("🤖 Chatbot CUSC (Agent + Google File Search) sẵn sàng!")
     print("=" * 30)
@@ -108,7 +96,7 @@ def main():
     choice = input("Lựa chọn của bạn (1 hoặc 2): ").strip()
 
     if choice == '2':
-        sessions = list_sessions(limit=10, user_id=user_id)
+        sessions = list_sessions(limit=10, user_id=user_id)  #
         if not sessions:
             session_id = str(uuid.uuid4())
         else:
@@ -145,7 +133,9 @@ def main():
 
         img_path = input("🖼️ Ảnh Path (Enter để bỏ qua): ").strip().replace('"', '')
         if img_path and os.path.exists(img_path):
-            handle_multimodal_query(user_input, img_path, user_id, session_id)
+            # [Refactor] Sử dụng VisionService từ APP Container thay vì hàm rời rạc cũ
+            vision_resp = APP.vision_service.process_image_query(session_id, user_id, user_input, img_path)
+            print(f"\n🤖 Vision: {vision_resp}\n")
         else:
             handle_text_query(user_input, user_id, session_id)
 

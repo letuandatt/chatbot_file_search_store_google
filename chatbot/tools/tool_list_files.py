@@ -7,7 +7,7 @@ def tool_list_uploaded_files(user_id: str = None):
     """
     List all files uploaded by the given user (across sessions).
     This avoids session-mismatch issues in CLI dev flow.
-    Returns a newline-separated list or an informative message.
+    Returns a newline-separated list or an inormative message.
     """
     if not user_id:
         return "Lỗi: thiếu user_id."

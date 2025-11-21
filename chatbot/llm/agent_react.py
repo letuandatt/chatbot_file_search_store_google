@@ -23,7 +23,7 @@ def create_agent_executor(llm, tools):
         prompt,
         output_parser=SafeReActOutputParser()
     )
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=8)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
 
     def _prepare_agent_input(input_dict, config):
         session_id = config.get("configurable", {}).get("session_id")
