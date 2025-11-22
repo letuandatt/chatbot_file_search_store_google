@@ -13,6 +13,8 @@ from chatbot.core.file_store import save_pdf_to_mongo, process_and_vectorize_pdf
 from chatbot.services.vision_service import VisionService
 from chatbot.router.dispatcher import build_rag_agent
 
+from langchain_core.messages import HumanMessage
+
 
 # --- SERVICE CONTAINER ---
 class AppContainer:
@@ -66,21 +68,25 @@ def handle_pdf_upload(pdf_path: str, session_id: str, user_id: str):
 
 
 def handle_text_query(query_text: str, user_id: str, session_id: str):
-    print("--- Processing by RAG Agent ---")
+    print("--- Processing by Multi-Agent System ---")
     if not APP.agent_executor:
         print("Agent not ready.")
         return
     try:
-        # Gọi Agent Executor từ APP Container
-        res = APP.agent_executor.invoke(
-            {"question": query_text},
-            config={"configurable": {"session_id": session_id, "user_id": user_id}}
-        )
-        full_response = res.get("output", "Không có phản hồi.") if isinstance(res, dict) else str(res)
-        print(f"\n🤖 Bot: {full_response}\n")
+        # LangGraph input là một list messages
+        inputs = {"messages": [HumanMessage(content=query_text)]}
 
-        # Lưu tin nhắn (Agent ReAct đôi khi cần lưu thủ công phần Final Answer)
-        save_session_message(session_id, user_id, query_text, full_response)  #
+        # Gọi Graph
+        # config dùng để quản lý state nếu cần (nhưng ở đây state lưu trong graph memory tạm)
+        result = APP.agent_executor.invoke(inputs, config={"configurable": {"session_id": session_id, "user_id": user_id}})
+
+        # Lấy tin nhắn cuối cùng của AI
+        last_message = result["messages"][-1]
+        full_response = last_message.content
+
+        print(f"\n🤖 Bot ({last_message.name if hasattr(last_message, 'name') else 'Assistant'}): {full_response}\n")
+
+        save_session_message(session_id, user_id, query_text, full_response)
     except Exception as e:
         print(f"[main] Agent error: {e}")
 
