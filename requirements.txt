@@ -1,4 +1,4 @@
-fitz~=1.26.6
+
 pymupdf4llm~=0.2.7
 langchain-google-genai~=2.0.5
 langchain~=0.3.27
