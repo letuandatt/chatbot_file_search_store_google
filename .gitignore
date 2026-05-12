@@ -1,12 +1,39 @@
-__pycache__
-.idea
-chatbot/data
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+.Python
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# Data + secrets
+chatbot/data/
 chatbot/.env
-chatbot/__pycache__
-chatbot/core/__pycache__
-chatbot/llm/__pycache__
-chatbot/router/__pycache__
-chatbot/tools/__pycache__
-chatbot/services/__pycache__
-node_modules
-.next
+.env
+.env.local
+
+# Frontend
+node_modules/
+.next/
+out/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
