@@ -71,20 +71,15 @@ async def get_current_user_optional(
         return None
 
 
-# AppContainer singleton for chatbot agent
-_app_container = None
-_app_container_lock = None
-
-
+# AppContainer singleton for the chatbot agent. The container itself
+# owns the singleton + lock; this dependency just exposes it to FastAPI.
 def get_app_container():
     """
-    Dependency to get the AppContainer singleton
-    Lazy initialization to avoid loading heavy models until needed
+    Return the process-wide chatbot AppContainer.
+
+    The first call builds the container (GenAI client, agent executor,
+    memory service, file watcher); subsequent calls return the same
+    instance. Construction is thread-safe.
     """
-    global _app_container
-    
-    if _app_container is None:
-        from chatbot.main import AppContainer
-        _app_container = AppContainer()
-    
-    return _app_container
+    from chatbot.app_container import AppContainer
+    return AppContainer.instance()
