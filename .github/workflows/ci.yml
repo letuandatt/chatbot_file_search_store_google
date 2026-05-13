@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  # Cancel previous runs on the same PR so we don't waste minutes.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.7,<0.8"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check (tests only — full codebase format is a follow-up)
+        # We intentionally only enforce format on tests/ for now; reformatting
+        # the entire legacy codebase belongs in its own PR. Track the rollout
+        # in https://github.com/letuandatt/LexMindChatbot/issues (add follow-up).
+        run: ruff format --check tests/
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test deps
+        # We deliberately install ONLY the test requirements, not the full
+        # requirements.txt — running pytest does not need google-genai,
+        # cohere, langchain, etc. and pulling them in just makes CI slow.
+        run: pip install -r requirements-test.txt
+
+      - name: Run tests
+        env:
+          # conftest.py also sets these, but exporting them up-front makes
+          # failures easier to debug from the CI log.
+          JWT_SECRET_KEY: test-secret-key-not-for-production
+          MONGO_URI: mongodb://localhost:27017/_unused_in_tests
+          GOOGLE_API_KEY: test
+          COHERE_API_KEY: test
+          GMAIL_USER: test@example.com
+          GMAIL_APP_PASSWORD: test
+          FRONTEND_URL: http://localhost:3000
+        run: pytest -v --tb=short
+
+  frontend:
+    name: Frontend lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint || echo "::warning::frontend lint reported issues; not blocking yet"
