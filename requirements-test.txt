@@ -3,6 +3,7 @@
 pytest~=8.3
 pytest-asyncio~=0.24
 mongomock~=4.3
+pymongo~=4.10        # for bson + ReturnDocument enum; mongomock alone doesn't ship them
 fastapi~=0.115.0
 pydantic[email]~=2.10.0
 passlib[bcrypt]~=1.7.4
