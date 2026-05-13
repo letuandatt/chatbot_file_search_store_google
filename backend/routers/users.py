@@ -108,25 +108,30 @@ async def change_user_password(
 
 @router.delete(
     "/me",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=status.HTTP_200_OK,
     summary="Delete account",
-    description="Permanently delete the current user's account"
+    description="Permanently delete the current user's account",
 )
 async def delete_me(current_user: dict = Depends(get_current_user)):
     """
     Permanently delete the current user's account.
-    
+
     **Warning**: This action cannot be undone. All user data will be deleted.
+
+    Returns 200 with a confirmation body. We deliberately do NOT use
+    204 No Content here because the error path raises an HTTPException
+    with a JSON body, and a 204 response with a body violates the HTTP
+    spec (some proxies will strip the body, breaking error reporting).
     """
     success = delete_user(str(current_user["_id"]))
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete account"
+            detail="Failed to delete account",
         )
-    
-    return None
+
+    return {"message": "Account deleted successfully"}
 
 
 @router.post(

@@ -1,7 +1,42 @@
 from langchain_core.tools import StructuredTool
+from chatbot.core.db import DB_DOCUMENTS_COLLECTION
 from chatbot.core.file_store import get_session_file_stores
 from chatbot.core.cache import app_cache
 from chatbot.core.utils import safe_json_parse
+
+
+def _describe_pending_files(session_id: str) -> str:
+    """
+    When `get_session_file_stores` returns nothing, look up the raw
+    documents collection to tell the user *why* — still processing
+    vs. genuinely no upload — instead of returning the same blanket
+    message in both cases.
+    """
+    if DB_DOCUMENTS_COLLECTION is None:
+        return "Chưa có file nào trong phiên này."
+    try:
+        statuses = [
+            doc.get("status")
+            for doc in DB_DOCUMENTS_COLLECTION.find(
+                {"session_id": session_id}, {"status": 1}
+            )
+        ]
+    except Exception:
+        return "Chưa có file nào trong phiên này."
+
+    if not statuses:
+        return "Chưa có file nào trong phiên này."
+    if any(s in ("uploaded", "processing") for s in statuses):
+        return (
+            "File của bạn đang được hệ thống xử lý. "
+            "Vui lòng thử lại sau khoảng 30 giây."
+        )
+    if all(s in ("error", "error_processing") for s in statuses):
+        return (
+            "Hệ thống không xử lý được file bạn đã tải lên. "
+            "Vui lòng thử tải lại."
+        )
+    return "Chưa có file nào trong phiên này."
 
 
 def build_tool_search_uploaded(rag_pipeline, genai_client):
@@ -42,7 +77,7 @@ def build_tool_search_uploaded(rag_pipeline, genai_client):
 
         user_stores = get_session_file_stores(session_id)
         if not user_stores:
-            return "Chưa có file nào trong phiên này."
+            return _describe_pending_files(session_id)
 
         valid_stores = _validate_stores(user_stores)
 

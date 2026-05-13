@@ -2,12 +2,18 @@
 User Service
 Handles user CRUD operations
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from bson import ObjectId
+from pymongo import ReturnDocument
 
 from chatbot.core.db import DB_USERS_COLLECTION, get_mongo_collection
 from backend.services.auth_service import hash_password, verify_password
+
+
+def _now() -> datetime:
+    """Single source of truth for timestamps: aware UTC datetime."""
+    return datetime.now(timezone.utc)
 
 
 def create_user(email: str, password: str, full_name: Optional[str] = None) -> Optional[dict]:
@@ -29,8 +35,8 @@ def create_user(email: str, password: str, full_name: Optional[str] = None) -> O
         "hashed_password": hash_password(password),
         "full_name": full_name,
         "avatar_url": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "created_at": _now(),
+        "updated_at": _now(),
         "is_active": True,
         "is_verified": False,  # For future email verification
         "preferences": {}  # User preferences/settings
@@ -95,13 +101,16 @@ def update_user(user_id: str, update_data: dict) -> Optional[dict]:
     
     # Filter out None values and add updated_at
     update_fields = {k: v for k, v in update_data.items() if v is not None}
-    update_fields["updated_at"] = datetime.utcnow()
+    update_fields["updated_at"] = _now()
     
     try:
+        # `return_document=True` happens to map to ReturnDocument.AFTER in
+        # current pymongo versions, but that's an undocumented coincidence.
+        # The enum makes the intent explicit and future-proof.
         result = DB_USERS_COLLECTION.find_one_and_update(
             {"_id": ObjectId(user_id)},
             {"$set": update_fields},
-            return_document=True
+            return_document=ReturnDocument.AFTER,
         )
         return result
     except Exception as e:
@@ -132,7 +141,7 @@ def change_password(user_id: str, current_password: str, new_password: str) -> b
             {
                 "$set": {
                     "hashed_password": hash_password(new_password),
-                    "updated_at": datetime.utcnow()
+                    "updated_at": _now()
                 }
             }
         )
@@ -175,7 +184,7 @@ def deactivate_user(user_id: str) -> bool:
     try:
         result = DB_USERS_COLLECTION.update_one(
             {"_id": ObjectId(user_id)},
-            {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
+            {"$set": {"is_active": False, "updated_at": _now()}}
         )
         return result.modified_count > 0
     except Exception as e:
@@ -185,19 +194,33 @@ def deactivate_user(user_id: str) -> bool:
 
 def verify_user(user_id: str) -> bool:
     """
-    Verify a user's email address.
-    Sets is_verified = True.
-    Returns True if successful.
+    Mark a user's email as verified.
+
+    Returns True only when an existing user document was updated. A stale
+    verification token whose user has since been deleted will return False
+    (previously the code happily "verified" a non-existent user because
+    update_one + an upsert-less filter silently no-ops).
     """
     if DB_USERS_COLLECTION is None:
         return False
-    
+
     try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return False
+
+    try:
+        existing = DB_USERS_COLLECTION.find_one({"_id": oid}, {"_id": 1})
+        if existing is None:
+            return False
+
         result = DB_USERS_COLLECTION.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {"is_verified": True, "updated_at": datetime.utcnow()}}
+            {"_id": oid},
+            {"$set": {"is_verified": True, "updated_at": _now()}},
         )
-        return result.modified_count > 0
+        # modified_count == 0 means the user was already verified, but the
+        # operation still succeeded conceptually.
+        return result.matched_count > 0
     except Exception as e:
         print(f"[user_service] Error verifying user: {e}")
         return False

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from chatbot.core.db import get_mongo_collection
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.chat_history import InMemoryChatMessageHistory
@@ -19,13 +19,18 @@ def save_session_message(
     if coll is None:
         print("[core.history] sessions collection missing.")
         return
-    now = datetime.now().isoformat()
+    # Store an aware UTC timestamp instead of a naive local-time ISO
+    # string. The previous value (`datetime.now().isoformat()`) silently
+    # drifted with the host's timezone — sessions created on a UTC
+    # container compared against sessions created on a +07:00 dev box
+    # would sort wrong by `updated_at`.
+    now = datetime.now(timezone.utc)
     message_data = {
         "question": question,
         "answer": answer,
         "image_gridfs_id": image_gridfs_id,
         "thinking_steps": thinking_steps,
-        "timestamp": now
+        "timestamp": now,
     }
     try:
         coll.update_one(
