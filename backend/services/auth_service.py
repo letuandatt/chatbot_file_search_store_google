@@ -1,9 +1,8 @@
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from passlib.context import CryptContext
-from jose import jwt, JWTError
 
 from chatbot.config import config as app_config
 
@@ -71,29 +70,59 @@ def decode_access_token(token: str) -> Optional[str]:
         payload = jwt.decode(
             token,
             app_config.JWT_SECRET_KEY,
-            algorithms=[app_config.JWT_ALGORITHM]
+            algorithms=[app_config.JWT_ALGORITHM],
         )
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            return None
-        return user_id
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
+
+    # Refresh tokens must not be accepted on access-token code paths.
+    if payload.get("type") == "refresh":
+        return None
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    return user_id
 
 
 def create_refresh_token(user_id: str) -> str:
     """
     Create a refresh token (longer expiry) for the given user_id.
     """
-    expire = datetime.now(timezone.utc) + timedelta(days=30)  # 30 days
+    expire = datetime.now(timezone.utc) + timedelta(days=app_config.REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user_id,
         "exp": expire,
-        "type": "refresh"
+        "type": "refresh",
     }
-    
+
     return jwt.encode(
         payload,
         app_config.JWT_SECRET_KEY,
-        algorithm=app_config.JWT_ALGORITHM
+        algorithm=app_config.JWT_ALGORITHM,
     )
+
+
+def decode_refresh_token(token: str) -> Optional[str]:
+    """
+    Decode a refresh token and return the user_id if valid.
+
+    Tokens that lack the `type=refresh` claim are rejected so a leaked
+    access token cannot be used in place of a refresh token (and vice
+    versa via `decode_access_token`, which only succeeds for tokens
+    without an incompatible type claim).
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            app_config.JWT_SECRET_KEY,
+            algorithms=[app_config.JWT_ALGORITHM],
+        )
+    except jwt.InvalidTokenError:
+        return None
+
+    if payload.get("type") != "refresh":
+        return None
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    return user_id

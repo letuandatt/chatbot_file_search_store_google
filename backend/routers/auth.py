@@ -2,18 +2,36 @@
 Authentication Router
 Handles user registration, login, and token management
 """
-from fastapi import APIRouter, HTTPException, status, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr
 
-from backend.models.user import (
-    UserCreate, UserLogin, UserResponse, Token
-)
-from backend.services.user_service import create_user, authenticate_user, verify_user, get_user_by_email
-from backend.services.auth_service import create_access_token
-from backend.services.email_service import (
-    generate_verification_token, decode_verification_token, send_verification_email
-)
 from backend.dependencies import get_current_user
+from backend.models.user import Token, UserCreate, UserLogin, UserResponse
+from backend.services.auth_service import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
+from backend.services.cookie_service import (
+    clear_auth_cookies,
+    set_access_token_cookie,
+    set_refresh_token_cookie,
+)
+from backend.services.email_service import (
+    decode_verification_token,
+    generate_verification_token,
+    send_verification_email,
+)
+from backend.services.user_service import (
+    authenticate_user,
+    create_user,
+    get_user_by_email,
+    get_user_by_id,
+    verify_user,
+)
+from chatbot.config import config as app_config
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -78,30 +96,40 @@ async def register(user_data: UserCreate):
     "/login",
     response_model=Token,
     summary="Login to get access token",
-    description="Authenticate with email and password to receive JWT token"
+    description="Authenticate with email and password to receive JWT token",
 )
-async def login(credentials: UserLogin):
+async def login(credentials: UserLogin, response: Response):
     """
     Login with email and password.
-    
-    Returns a JWT access token that should be included in the Authorization header
-    for authenticated requests: `Authorization: Bearer <token>`
+
+    On success the access + refresh tokens are stored in httpOnly,
+    Secure (in production), SameSite=Lax cookies so the browser cannot
+    expose them to JavaScript (eliminating the XSS → token-theft path).
+
+    For API clients that don't run in a browser the access token is
+    still returned in the response body, and the `Authorization: Bearer`
+    header continues to be accepted by all protected endpoints.
     """
     user = authenticate_user(credentials.email, credentials.password)
-    
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    access_token, expires_in = create_access_token(user_id=str(user["_id"]))
-    
+
+    user_id = str(user["_id"])
+    access_token, expires_in = create_access_token(user_id=user_id)
+    refresh_token = create_refresh_token(user_id)
+
+    set_access_token_cookie(response, access_token, expires_in)
+    set_refresh_token_cookie(response, refresh_token)
+
     return Token(
         access_token=access_token,
         token_type="bearer",
-        expires_in=expires_in
+        expires_in=expires_in,
     )
 
 
@@ -176,44 +204,99 @@ async def resend_verification(request: ResendVerificationRequest):
 
 
 @router.post(
+    "/refresh",
+    response_model=Token,
+    summary="Mint a new access token using the refresh-token cookie",
+    description="Refresh the short-lived access token using the long-lived refresh token cookie.",
+)
+async def refresh_token_endpoint(
+    response: Response,
+    refresh_cookie: Optional[str] = Cookie(default=None, alias=app_config.REFRESH_TOKEN_COOKIE),
+):
+    """
+    Exchange a valid refresh-token cookie for a fresh access token.
+
+    Only the refresh cookie is trusted here — we deliberately do NOT
+    accept the refresh token in the request body or Authorization
+    header, because httpOnly is the property that protects it.
+    """
+    if not refresh_cookie:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token",
+        )
+
+    user_id = decode_refresh_token(refresh_cookie)
+    if user_id is None:
+        clear_auth_cookies(response)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    user = get_user_by_id(user_id)
+    if user is None or not user.get("is_active", True):
+        clear_auth_cookies(response)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account not found or deactivated",
+        )
+
+    access_token, expires_in = create_access_token(user_id=user_id)
+    set_access_token_cookie(response, access_token, expires_in)
+
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=expires_in,
+    )
+
+
+@router.post(
     "/logout",
     status_code=status.HTTP_200_OK,
-    summary="Logout (client-side)",
-    description="Logout endpoint (JWT tokens are stateless, client should discard token)"
+    summary="Logout",
+    description="Clear the auth cookies. JWT itself is stateless, so the access token remains valid until it expires; clients should rely on the cookies being cleared.",
 )
-async def logout():
+async def logout(response: Response):
     """
-    Logout endpoint.
-    
-    Note: JWT tokens are stateless. The client should discard the token.
-    This endpoint is provided for API completeness.
+    Clear the access + refresh httpOnly cookies.
+
+    JWTs are stateless and cannot be invalidated server-side without a
+    revocation list (deferred to a follow-up). Clearing the cookies is
+    enough to prevent the browser from re-authenticating on its own.
     """
-    return {"message": "Successfully logged out. Please discard your token."}
+    clear_auth_cookies(response)
+    return {"message": "Successfully logged out."}
 
 
 @router.delete(
     "/account",
     status_code=status.HTTP_200_OK,
     summary="Delete user account",
-    description="Permanently delete the current user's account"
+    description="Permanently delete the current user's account",
 )
-async def delete_account(current_user: dict = Depends(get_current_user)):
+async def delete_account(
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Delete the current user's account permanently.
-    
+
     This action cannot be undone. All user data including sessions will be deleted.
     """
     from backend.services.user_service import delete_user
-    
+
     user_id = str(current_user["_id"])
     success = delete_user(user_id)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Không thể xóa tài khoản. Vui lòng thử lại sau."
+            detail="Không thể xóa tài khoản. Vui lòng thử lại sau.",
         )
-    
+
+    clear_auth_cookies(response)
     return {"message": "Tài khoản đã được xóa thành công."}
 
 

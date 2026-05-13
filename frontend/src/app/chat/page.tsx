@@ -50,22 +50,19 @@ export default function ChatPage() {
     const [editingTitle, setEditingTitle] = useState("");
     const [expandedThinking, setExpandedThinking] = useState<Set<number>>(new Set());
 
-    // Get auth token
-    const getToken = () => localStorage.getItem("access_token");
-
-    // Auth headers
-    const authHeaders = () => ({
-        "Authorization": `Bearer ${getToken()}`,
-        "Content-Type": "application/json",
-    });
+    // Auth is now driven by httpOnly cookies set on /auth/login; the
+    // frontend never reads or stores the token itself, so every fetch
+    // must include credentials. JSON endpoints still need a Content-Type;
+    // multipart endpoints (uploads, image chat) must NOT set one so the
+    // browser fills in the multipart boundary automatically.
+    const jsonHeaders = { "Content-Type": "application/json" } as const;
+    const handleAuthFailure = () => {
+        router.push("/login");
+    };
 
     // Check auth on mount
     useEffect(() => {
-        if (!getToken()) {
-            router.push("/login");
-        } else {
-            loadSessions();
-        }
+        loadSessions();
     }, []);
 
     // Scroll to bottom when messages change
@@ -77,11 +74,10 @@ export default function ChatPage() {
     const loadSessions = async () => {
         try {
             const res = await fetch(`${API_URL}/sessions/`, {
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.status === 401) {
-                localStorage.removeItem("access_token");
-                router.push("/login");
+                handleAuthFailure();
                 return;
             }
             if (res.ok) {
@@ -98,7 +94,8 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/sessions/`, {
                 method: "POST",
-                headers: authHeaders(),
+                credentials: "include",
+                headers: jsonHeaders,
                 body: JSON.stringify({ title: null }),
             });
             if (res.ok) {
@@ -121,7 +118,8 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/sessions/${sessionId}`, {
                 method: "PUT",
-                headers: authHeaders(),
+                credentials: "include",
+                headers: jsonHeaders,
                 body: JSON.stringify({ title: newTitle.trim() }),
             });
             if (res.ok) {
@@ -143,7 +141,7 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/sessions/${sessionId}`, {
                 method: "DELETE",
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok || res.status === 204) {
                 setSessions(sessions.filter(s => s.session_id !== sessionId));
@@ -163,7 +161,7 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/sessions/`, {
                 method: "DELETE",
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok) {
                 setSessions([]);
@@ -180,7 +178,7 @@ export default function ChatPage() {
         setIsLoading(true);
         try {
             const res = await fetch(`${API_URL}/sessions/${sessionId}`, {
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok) {
                 const data = await res.json();
@@ -228,7 +226,7 @@ export default function ChatPage() {
 
                 res = await fetch(`${API_URL}/chat/image`, {
                     method: "POST",
-                    headers: { "Authorization": `Bearer ${getToken()}` },
+                    credentials: "include",
                     body: formData,
                 });
 
@@ -238,7 +236,8 @@ export default function ChatPage() {
                 // Regular text message via /chat/text endpoint
                 res = await fetch(`${API_URL}/chat/text`, {
                     method: "POST",
-                    headers: authHeaders(),
+                    credentials: "include",
+                    headers: jsonHeaders,
                     body: JSON.stringify({
                         message: userMessage,
                         session_id: activeSession,
@@ -316,7 +315,7 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/chat/upload`, {
                 method: "POST",
-                headers: { "Authorization": `Bearer ${getToken()}` },
+                credentials: "include",
                 body: formData,
             });
             if (res.ok) {
@@ -345,7 +344,7 @@ export default function ChatPage() {
         const checkStatus = async () => {
             try {
                 const res = await fetch(`${API_URL}/chat/file/${fileId}/status`, {
-                    headers: authHeaders(),
+                    credentials: "include",
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -381,9 +380,16 @@ export default function ChatPage() {
     };
 
     // Logout
-    const handleLogout = () => {
+    const handleLogout = async () => {
         if (!confirm("Are u sure you want to logout?")) return;
-        localStorage.removeItem("access_token");
+        try {
+            await fetch(`${API_URL}/auth/logout`, {
+                method: "POST",
+                credentials: "include",
+            });
+        } catch (error) {
+            console.error("Error logging out:", error);
+        }
         router.push("/login");
     };
 
@@ -393,10 +399,9 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_URL}/auth/account`, {
                 method: "DELETE",
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok) {
-                localStorage.removeItem("access_token");
                 alert("Tài khoản đã được xóa thành công.");
                 router.push("/");
             } else {

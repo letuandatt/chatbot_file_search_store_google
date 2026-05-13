@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.routers import auth, users, sessions, chat
+from chatbot.config import config as app_config
 from chatbot.core.db import init_db
 from chatbot.core.watcher import app_watcher
 
@@ -64,9 +65,15 @@ Authorization: Bearer <your_token>
 
 
 # CORS Middleware
+#
+# With cookie-based auth we MUST whitelist explicit origins — the combination
+# of `allow_origins=["*"]` and `allow_credentials=True` is invalid per the
+# CORS spec and most browsers silently drop the credentials. Configure
+# `CORS_ALLOW_ORIGINS` (comma-separated) in the environment to add staging
+# or preview-deploy origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure specific origins in production
+    allow_origins=app_config.CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
