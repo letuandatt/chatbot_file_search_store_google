@@ -65,9 +65,9 @@ def test_access_and_refresh_tokens_are_not_interchangeable():
 
     # access token decoded as a refresh token: should fail
     if hasattr(auth, "decode_refresh_token"):
-        assert auth.decode_refresh_token(access) is None, (
-            "access token should NOT be accepted by decode_refresh_token"
-        )
+        assert (
+            auth.decode_refresh_token(access) is None
+        ), "access token should NOT be accepted by decode_refresh_token"
 
     # refresh token decoded as an access token: behaviour depends on
     # whether the type-separation guard (PR B2) has landed. On master

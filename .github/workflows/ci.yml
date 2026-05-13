@@ -23,7 +23,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install "ruff>=0.7,<0.8"
+        # Pin exactly to the same version as .pre-commit-config.yaml so
+        # contributors and CI run identical lint + format checks.
+        run: pip install "ruff==0.7.4"
 
       - name: Lint
         run: ruff check .

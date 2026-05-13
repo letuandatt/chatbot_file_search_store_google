@@ -111,9 +111,9 @@ def test_update_user_returns_updated_document(mongo_db):
 
     updated = us.update_user(str(user["_id"]), {"full_name": "New"})
     assert updated is not None
-    assert updated["full_name"] == "New", (
-        "update_user must return the post-update document, not the original snapshot"
-    )
+    assert (
+        updated["full_name"] == "New"
+    ), "update_user must return the post-update document, not the original snapshot"
 
 
 def test_delete_user(mongo_db):
