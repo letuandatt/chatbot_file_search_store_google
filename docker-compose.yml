@@ -1,0 +1,53 @@
+# Local dev infrastructure for the self-hosted RAG pipeline.
+#
+# Bring up just Qdrant (most common dev case):
+#     docker compose up -d qdrant
+#
+# Bring up everything (Qdrant + MongoDB + Redis) for full local testing:
+#     docker compose up -d
+#
+# Stop and remove volumes (wipes the law corpus index + Mongo data):
+#     docker compose down -v
+#
+# All services bind to localhost only — do NOT expose these ports
+# directly to the internet without adding auth.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: lexmind-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"  # HTTP / REST (what the Python client uses)
+      - "127.0.0.1:6334:6334"  # gRPC (unused for now; documented for future)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: ""  # leave empty for local dev; set + add to .env for prod
+      QDRANT__LOG_LEVEL: INFO
+
+  mongodb:
+    image: mongo:7.0
+    container_name: lexmind-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    # NOTE: running as a single-node *replica set* enables the change
+    # stream used by `chatbot/core/watcher.py`. Without this the watcher
+    # falls back to 5s polling — fine for dev, slower in prod.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: lexmind-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  qdrant_data:
+  mongo_data:
+  redis_data:

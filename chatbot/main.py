@@ -6,10 +6,12 @@ from langchain_core.messages import HumanMessage
 
 from chatbot.config import config as app_config
 from chatbot.core.db import init_db
+from chatbot.core.embedder import CohereEmbedder
 from chatbot.core.history import list_sessions, get_session_history, save_session_message
 from chatbot.core.file_store import save_pdf_to_mongo
-from chatbot.core.watcher import app_watcher
 from chatbot.core.memory_profile import build_user_memory
+from chatbot.core.vectorstore import QdrantVectorStore
+from chatbot.core.watcher import app_watcher
 
 from chatbot.services.vision_service import VisionService
 from chatbot.router.dispatcher import build_rag_agent
@@ -29,15 +31,32 @@ class AppContainer:
         # Init Vision
         self.vision_service = VisionService(self.genai_client)
 
+        # Self-hosted RAG plumbing: 1 embedder + 1 vector store, used by
+        # the law tool, the user-upload tool, and the watcher.
+        self.embedder = CohereEmbedder()
+        self.vector_store = QdrantVectorStore()
+        try:
+            self.vector_store.ensure_collections()
+            print("[App] Qdrant collections ready.")
+        except Exception as e:
+            print(f"[App] Qdrant init failed: {e}")
+
         # Init Agent & Memory
         if self.genai_client:
-            self.agent_executor, self.text_llm = build_rag_agent(self.genai_client, self.vision_service)
+            self.agent_executor, self.text_llm = build_rag_agent(
+                self.genai_client,
+                self.vision_service,
+                embedder=self.embedder,
+                vector_store=self.vector_store,
+            )
             self.memory_service = build_user_memory(self.text_llm)
         else:
             self.agent_executor = None
             self.memory_service = None
 
-        # Start Watcher (Để xử lý file ngầm)
+        # Wire the background processor and start it last so it doesn't
+        # see a half-built container.
+        app_watcher.bind_pipeline(self.embedder, self.vector_store)
         app_watcher.start()
 
 

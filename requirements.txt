@@ -27,3 +27,7 @@ python-jose[cryptography]~=3.4.0
 passlib[bcrypt]~=1.7.4
 python-multipart~=0.0.12
 pydantic[email]~=2.10.0
+
+# Self-hosted RAG pipeline (replaces Google `file_search_stores`)
+opendataloader-pdf~=2.4
+qdrant-client~=1.12

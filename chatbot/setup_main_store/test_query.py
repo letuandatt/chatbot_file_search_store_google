@@ -1,106 +1,113 @@
-import google.genai as genai
-import google.genai.types as types
+"""
+CLI smoke test for the self-hosted law store.
+
+Replaces the old Google `file_search_stores` test (which sent the query
+to `client.models.generate_content(tools=[FileSearch(...)])`). Now we
+exercise the same code path the production agent uses:
+
+    1. embed the query (Cohere)
+    2. similarity search in Qdrant (law_corpus)
+    3. rerank + evaluator + generate via AdvancedRagPipeline
+
+Usage:
+
+    python -m chatbot.setup_main_store.test_query \\
+        "Điều kiện thành lập công ty TNHH một thành viên là gì?"
+
+    # Skip the LLM stage and just print the top-k retrieved chunks
+    python -m chatbot.setup_main_store.test_query --retrieve-only \\
+        "Cổ đông sáng lập có quyền gì?"
+"""
+from __future__ import annotations
+
+import argparse
+import logging
 import sys
 
-from chatbot.config import config
+from chatbot.core.embedder import CohereEmbedder
+from chatbot.core.vectorstore import QdrantVectorStore
 
-# --- Hằng số từ Config ---
-GOOGLE_API_KEY = config.GOOGLE_API_KEY
-STORE_NAME = config.LAW_MAIN_STORE_NAME
+logger = logging.getLogger(__name__)
 
 
-def test_query(client, store_name, test_question):
-    """
-    Gửi một câu hỏi test đến File Store.
-    """
-    print(f"🚀 Đang test query với Store: {store_name}")
-    print(f"❓ Câu hỏi: {test_question}\n")
+def cmd_retrieve_only(query: str, top_k: int) -> int:
+    embedder = CohereEmbedder()
+    store = QdrantVectorStore()
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=test_question,
-            config=types.GenerateContentConfig(
-                tools=[
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[store_name]
-                        )
-                    )
-                ]
-            ),
-        )
+    qvec = embedder.embed_query(query)
+    hits = store.search(
+        collection=store.law_collection,
+        query_vector=qvec,
+        top_k=top_k,
+    )
 
-        print("✅ TRẢ LỜI TỪ RAG:\n")
-        print(response.text)
+    if not hits:
+        print("(no hits)")
+        return 0
+
+    for i, hit in enumerate(hits, 1):
+        print(f"--- HIT {i}  score={hit.score:.4f}  [{hit.citation or 'n/a'}] ---")
+        print(hit.text[:600])
         print()
-
-        # --- Nguồn trích dẫn ---
-        metadata = response.candidates[0].grounding_metadata
-
-        # Kiểm tra xem có metadata, support, và chunk không
-        if not (metadata and metadata.grounding_supports and metadata.grounding_chunks):
-            print("(Không tìm thấy thông tin trích dẫn chi tiết)")
-            # return  # Kết thúc hàm sớm
-
-        # 1. Lấy danh sách TẤT CẢ chunk (để tra cứu tên file)
-        all_chunks = metadata.grounding_chunks
-
-        # 2. Tạo một dictionary để nhóm các trích dẫn theo tên file
-        citations_by_file = {}
-
-        # 3. Lặp qua các 'grounding_supports' (đây là các trích dẫn thực tế)
-        for support in metadata.grounding_supports:
-
-            # Lấy đoạn văn bản chính xác đã được AI sử dụng
-            segment_text = support.segment.text
-
-            # Lấy các chunk (file) mà đoạn văn bản này thuộc về
-            for chunk_index in support.grounding_chunk_indices:
-                if 0 <= chunk_index < len(all_chunks):
-                    chunk = all_chunks[chunk_index]
-                    filename = chunk.retrieved_context.title
-
-                    # Thêm vào dictionary
-                    if filename not in citations_by_file:
-                        citations_by_file[filename] = set()  # Dùng set để tránh trùng lặp
-
-                    citations_by_file[filename].add(segment_text)
-
-        # 4. In ra kết quả đã được nhóm lại
-        if not citations_by_file:
-            print("(Không tìm thấy trích dẫn cụ thể)")
-        else:
-            for filename, segments in citations_by_file.items():
-                print(f"Nguồn: {filename}")
-                print("-" * 20)
-
-    except Exception as e:
-        print(f"❌ Lỗi khi thực hiện test query: {e}")
+    return 0
 
 
-# ==============================================================================
-# MAIN LOGIC
-# ==============================================================================
-if __name__ == '__main__':
-    # 1. Kiểm tra xem file .env đã được cập nhật chưa
-    if not STORE_NAME:
-        print("❌ LỖI: LAW_MAIN_STORE_NAME bị trống trong file .env.")
-        print("Vui lòng chạy 'python setup_main_store.py' trước và cập nhật file .env.")
-        sys.exit()  # Thoát
+def cmd_full(query: str) -> int:
+    # Late import: building the full pipeline pulls in Gemini, which we
+    # don't want to require for --retrieve-only mode.
+    import google.genai as genai
 
-    # 2. Khởi tạo client
-    try:
-        client = genai.Client(api_key=GOOGLE_API_KEY)
-    except Exception as e:
-        print(f"Lỗi nghiêm trọng khi tạo client: {e}")
-        sys.exit()
+    from chatbot.config import config as app_config
+    from chatbot.llm.llm_text import create_text_llm
+    from chatbot.services.rag_pipeline import AdvancedRagPipeline
 
-    # 3. Lấy câu hỏi
-    test_question = input("Nhập câu hỏi test (Enter để dùng câu mặc định): ")
-    if not test_question.strip():
-        test_question = "Chỉ thị nào nói về việc quy định học 2 buổi/ngày?"
-        print(f"Sử dụng câu hỏi mặc định: {test_question}")
+    embedder = CohereEmbedder()
+    store = QdrantVectorStore()
+    text_llm = create_text_llm()
+    genai_client = genai.Client(api_key=app_config.GOOGLE_API_KEY)
 
-    # 4. Chạy test
-    test_query(client, STORE_NAME, test_question)
+    pipeline = AdvancedRagPipeline(
+        genai_client=genai_client,
+        text_llm_langchain=text_llm,
+        embedder=embedder,
+        vector_store=store,
+    )
+    answer = pipeline.run_pipeline(
+        original_query=query,
+        collection=store.law_collection,
+    )
+
+    print("=" * 50)
+    print("ANSWER")
+    print("=" * 50)
+    print(answer)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("query", nargs="+", help="Câu hỏi cần test")
+    parser.add_argument(
+        "--retrieve-only",
+        action="store_true",
+        help="Skip the LLM generate stage; just show top-k retrieved chunks.",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=5, help="Top-k for --retrieve-only mode."
+    )
+    parser.add_argument("--log-level", default="INFO")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=args.log_level.upper(),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+    query = " ".join(args.query)
+    if args.retrieve_only:
+        return cmd_retrieve_only(query, args.top_k)
+    return cmd_full(query)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

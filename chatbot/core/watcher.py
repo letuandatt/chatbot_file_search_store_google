@@ -1,66 +1,76 @@
-import threading
-import time
+import logging
 import os
 import tempfile
+import threading
+import time
+
 from bson.objectid import ObjectId
 from pymongo.errors import OperationFailure
-import google.genai as genai
 
 from chatbot.core.db import DB_DOCUMENTS_COLLECTION, FS
 from chatbot.core.file_store import process_and_vectorize_pdf
-from chatbot.config import config as app_config
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseWatcher:
+    """Background poller/changestream that runs `process_and_vectorize_pdf`
+    on freshly-uploaded documents.
+
+    Embedder and vector_store are injected via :meth:`bind_pipeline` so
+    the watcher can boot during module import (singleton pattern) but
+    only start doing real work once the `AppContainer` is ready.
+    """
+
     def __init__(self):
         self._stop_event = threading.Event()
         self.thread = None
-        try:
-            self.genai_client = genai.Client(api_key=app_config.GOOGLE_API_KEY)
-        except Exception as e:
-            print(f"❌ [Watcher] Lỗi khởi tạo GenAI Client: {e}")
-            self.genai_client = None
+        self._embedder = None
+        self._vector_store = None
+
+    def bind_pipeline(self, embedder, vector_store) -> None:
+        self._embedder = embedder
+        self._vector_store = vector_store
 
     def _process_single_file(self, doc):
-        """Logic xử lý 1 file: Tải từ GridFS -> Upload Google -> Clean"""
+        """Pull blob from GridFS, hand to opendataloader-based pipeline."""
         filename = doc.get("filename", "unknown.pdf")
         gridfs_id = doc.get("file_gridfs_id")
         session_id = doc.get("session_id")
+        user_id = doc.get("user_id")
 
-        print(f"🔔 [Watcher] Phát hiện file mới: {filename}")
+        logger.info("[Watcher] new file: %s", filename)
 
         if not gridfs_id:
-            print(f"⚠️ [Watcher] File {filename} thiếu GridFS ID. Bỏ qua.")
+            logger.warning("[Watcher] %s missing GridFS id; skipping", filename)
+            return
+        if self._embedder is None or self._vector_store is None:
+            logger.error("[Watcher] pipeline not bound (embedder/vector_store); skipping %s", filename)
             return
 
         temp_path = None
         try:
-            # 1. Lấy file từ GridFS
             grid_out = FS.get(ObjectId(gridfs_id))
 
-            # 2. Ghi ra file tạm
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(grid_out.read())
                 temp_path = tmp_file.name
 
-            # 3. Xử lý
-            if self.genai_client:
-                process_and_vectorize_pdf(
-                    file_path=temp_path,
-                    session_id=session_id,
-                    doc_id=str(doc["_id"]),
-                    genai_client=self.genai_client
-                )
-                print(f"✅ [Watcher] Xử lý hoàn tất: {filename}")
-            else:
-                print("❌ [Watcher] GenAI Client chưa sẵn sàng.")
+            process_and_vectorize_pdf(
+                file_path=temp_path,
+                session_id=session_id,
+                doc_id=str(doc["_id"]),
+                embedder=self._embedder,
+                vector_store=self._vector_store,
+                user_id=user_id,
+            )
+            logger.info("[Watcher] processed: %s", filename)
 
-        except Exception as e:
-            print(f"❌ [Watcher] Lỗi khi xử lý file {filename}: {e}")
-            # Cập nhật trạng thái lỗi để không retry vô tận
+        except Exception as exc:
+            logger.error("[Watcher] failed on %s: %s", filename, exc)
             DB_DOCUMENTS_COLLECTION.update_one(
                 {"_id": doc["_id"]},
-                {"$set": {"status": "error", "error_msg": str(e)}}
+                {"$set": {"status": "error", "error_msg": str(exc)}},
             )
         finally:
             # 4. Dọn dẹp
