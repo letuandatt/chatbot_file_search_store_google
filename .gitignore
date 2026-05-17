@@ -37,3 +37,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Personal file
+Task
