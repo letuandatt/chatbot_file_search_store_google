@@ -1,0 +1,30 @@
+# pre-commit hooks. Install once with:
+#   pip install pre-commit && pre-commit install
+# Then every `git commit` runs the configured checks on staged files.
+#
+# Keep this minimal — match the CI rule set so contributors don't see
+# a different result locally vs. in CI.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        # ruff resolves config via ruff.toml at repo root
+        types_or: [python]
+      - id: ruff-format
+        types_or: [python]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Match the ruff per-file-ignore for in-flight files.
+        exclude: ^(chatbot/main\.py|chatbot/core/watcher\.py|chatbot/tools/tool_search_uploaded\.py)$
+      - id: end-of-file-fixer
+        exclude: ^(chatbot/main\.py|chatbot/core/watcher\.py|chatbot/tools/tool_search_uploaded\.py)$
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
