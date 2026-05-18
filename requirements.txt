@@ -18,6 +18,12 @@ pydantic[email]~=2.10.0
 python-jose[cryptography]~=3.4.0
 pyjwt~=2.10.0
 passlib[bcrypt]~=1.7.4
+# `passlib 1.7.4` reads `bcrypt.__about__.__version__` to detect the bcrypt
+# backend version. `bcrypt>=4.1` removed `__about__` AND added a hard
+# `ValueError: password cannot be longer than 72 bytes` on hash, so passlib
+# can no longer silently truncate. Pin <4 until we migrate off passlib
+# (tracked as a follow-up — likely switch to `bcrypt` direct or `argon2-cffi`).
+bcrypt<4.0
 
 # --- Data layer ---
 pymongo~=4.15.3
