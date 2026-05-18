@@ -1,0 +1,14 @@
+# Optional dependencies for data-ingestion scripts (chatbot/crawl_data.py).
+#
+# NOT required to run the backend or chatbot at runtime. Install only on
+# machines that run the crawler / data setup pipeline:
+#
+#     pip install -r requirements.txt -r requirements-ingest.txt
+#
+# Or, with pyproject.toml:
+#
+#     pip install -e ".[ingest]"
+
+selenium~=4.38.0
+webdriver-manager~=4.0.2
+beautifulsoup4~=4.14.2
