@@ -1,0 +1,14 @@
+# Minimal install set for running the test suite in CI.
+# Keeps tests fast by avoiding the full RAG / LangChain stack.
+pytest~=8.3
+pytest-asyncio~=0.24
+mongomock~=4.3
+pymongo~=4.10        # for bson + ReturnDocument enum; mongomock alone doesn't ship them
+fastapi~=0.115.0
+pydantic[email]~=2.10.0
+passlib[bcrypt]~=1.7.4
+bcrypt<4.0
+python-jose[cryptography]~=3.4.0
+pyjwt~=2.9.0
+python-dotenv~=1.0
+python-multipart~=0.0.12
