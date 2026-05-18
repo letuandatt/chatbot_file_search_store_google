@@ -1,5 +1,8 @@
 # Minimal install set for running the test suite in CI.
-# Keeps tests fast by avoiding the full RAG / LangChain stack.
+# Keeps tests fast by avoiding the full RAG / LangChain stack — only
+# `langchain` itself is pulled in (small, pure-python) so we can unit
+# test the ReAct output parser without the heavyweight RAG deps
+# (google-genai, cohere, qdrant, etc.).
 pytest~=8.3
 pytest-asyncio~=0.24
 mongomock~=4.3
@@ -12,3 +15,5 @@ python-jose[cryptography]~=3.4.0
 pyjwt~=2.9.0
 python-dotenv~=1.0
 python-multipart~=0.0.12
+langchain~=0.3.27       # required by tests/test_react_safe_parser.py
+langchain-core~=0.3.79  # AgentAction / AgentFinish schema
