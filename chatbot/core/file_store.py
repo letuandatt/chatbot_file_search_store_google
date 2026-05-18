@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from bson.objectid import ObjectId
 from chatbot.core.db import DB_DOCUMENTS_COLLECTION, FS
 from chatbot.core.utils import compute_file_hash
@@ -37,7 +37,11 @@ def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str, original_fi
             "filename": file_name,
             "file_gridfs_id": file_gridfs_id,
             "file_hash": file_hash,
-            "created_at": datetime.now().isoformat(),
+            # Aware UTC datetime keeps timestamps comparable across the
+            # codebase (auth_service uses datetime.now(timezone.utc) too).
+            # Mongo stores it as a BSON Date, which is preferable to a
+            # naive ISO string for sort/range queries.
+            "created_at": datetime.now(timezone.utc),
             "status": "uploaded"
         })
         return str(result.inserted_id)

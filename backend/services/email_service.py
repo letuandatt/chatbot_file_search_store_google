@@ -5,7 +5,7 @@ Handles sending verification emails via Gmail SMTP
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import jwt
 
@@ -17,7 +17,7 @@ def generate_verification_token(user_id: str) -> str:
     Generate a JWT token for email verification.
     Token expires in 24 hours.
     """
-    expire = datetime.utcnow() + timedelta(hours=app_config.VERIFICATION_TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=app_config.VERIFICATION_TOKEN_EXPIRE_HOURS)
     payload = {
         "user_id": user_id,
         "type": "email_verification",

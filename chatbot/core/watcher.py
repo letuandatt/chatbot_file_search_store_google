@@ -2,7 +2,10 @@ import threading
 import time
 import os
 import tempfile
+from typing import Optional
+
 from bson.objectid import ObjectId
+from pymongo import ReturnDocument
 from pymongo.errors import OperationFailure
 import google.genai as genai
 
@@ -70,18 +73,39 @@ class DatabaseWatcher:
                 except Exception:
                     pass
 
+    def _claim_next_uploaded(self) -> Optional[dict]:
+        """
+        Atomically claim one document whose status is still 'uploaded'.
+
+        Two watchers running in the same process (or two processes,
+        e.g. the CLI and the API) used to both `find({status:uploaded})`
+        and then `update_one` separately, racing to process the same
+        file twice. `find_one_and_update` flips the status to
+        'processing' in a single round trip, so only one watcher wins
+        the claim.
+        """
+        try:
+            return DB_DOCUMENTS_COLLECTION.find_one_and_update(
+                {"status": "uploaded"},
+                {"$set": {"status": "processing"}},
+                return_document=ReturnDocument.AFTER,
+            )
+        except Exception as e:
+            print(f"❌ [Watcher] Atomic claim failed: {e}")
+            return None
+
     def _poll_documents(self):
         """Chế độ Fallback: Quét DB mỗi 5 giây (Dùng cho Standalone Mongo)"""
         print("⚠️ [Watcher] Chuyển sang chế độ POLLING (Quét định kỳ 5s)...")
         while not self._stop_event.is_set():
             try:
-                # Tìm các file có status = 'uploaded'
-                cursor = DB_DOCUMENTS_COLLECTION.find({"status": "uploaded"})
-                for doc in cursor:
-                    if self._stop_event.is_set(): break
+                # Drain all currently-uploaded files before sleeping.
+                while not self._stop_event.is_set():
+                    doc = self._claim_next_uploaded()
+                    if doc is None:
+                        break
                     self._process_single_file(doc)
 
-                # Ngủ 5 giây rồi quét tiếp
                 time.sleep(5)
             except Exception as e:
                 print(f"❌ [Watcher] Polling Error: {e}")
@@ -112,7 +136,15 @@ class DatabaseWatcher:
                             continue
 
                     if doc and doc.get("status") == "uploaded":
-                        self._process_single_file(doc)
+                        # Claim before processing so a concurrent stream
+                        # or poll cannot pick up the same document.
+                        claimed = DB_DOCUMENTS_COLLECTION.find_one_and_update(
+                            {"_id": doc["_id"], "status": "uploaded"},
+                            {"$set": {"status": "processing"}},
+                            return_document=ReturnDocument.AFTER,
+                        )
+                        if claimed is not None:
+                            self._process_single_file(claimed)
 
         except OperationFailure as e:
             # Mã lỗi 40573: The $changeStream stage is only supported on replica sets
@@ -139,5 +171,36 @@ class DatabaseWatcher:
         print("🛑 [Watcher] Đang dừng dịch vụ...")
 
 
-# Singleton
-app_watcher = DatabaseWatcher()
+# Lazy singleton. The previous `app_watcher = DatabaseWatcher()` at
+# module import time eagerly instantiated a GenAI client (and any other
+# side-effect inside `__init__`), which meant simply importing this
+# module — e.g. from a unit test or migration script that just wants a
+# helper — would try to hit Google's API with whatever
+# GOOGLE_API_KEY happened to be in the environment.
+_app_watcher: Optional["DatabaseWatcher"] = None
+_app_watcher_lock = threading.Lock()
+
+
+def get_app_watcher() -> "DatabaseWatcher":
+    """Return the process-wide watcher, constructing it on first use."""
+    global _app_watcher
+    if _app_watcher is not None:
+        return _app_watcher
+    with _app_watcher_lock:
+        if _app_watcher is None:
+            _app_watcher = DatabaseWatcher()
+    return _app_watcher
+
+
+class _LazyWatcherProxy:
+    """
+    Backwards-compatible shim so existing `from chatbot.core.watcher
+    import app_watcher; app_watcher.start()` callers keep working
+    without paying the construction cost at import time.
+    """
+
+    def __getattr__(self, name):
+        return getattr(get_app_watcher(), name)
+
+
+app_watcher = _LazyWatcherProxy()
