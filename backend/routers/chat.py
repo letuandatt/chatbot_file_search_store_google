@@ -383,7 +383,8 @@ async def check_file_status(
     Returns:
     - status: "uploaded" | "processing" | "processed" | "error_processing"
     - filename: Original filename
-    - file_store_name: (only if processed) The file store name
+    - chunk_count: (only if processed) Number of indexed chunks in the
+      vector store
     """
     from chatbot.core.db import DB_DOCUMENTS_COLLECTION
     from bson import ObjectId
@@ -412,8 +413,8 @@ async def check_file_status(
             "file_id": file_id,
             "filename": doc.get("filename"),
             "status": doc.get("status", "uploaded"),
-            "file_store_name": doc.get("file_store_name"),
-            "error": doc.get("error")
+            "chunk_count": doc.get("chunk_count"),
+            "error": doc.get("error"),
         }
         
     except HTTPException:

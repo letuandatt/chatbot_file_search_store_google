@@ -52,6 +52,10 @@ dependencies = [
   "langgraph~=0.6.11",
   "cohere~=5.20.0",
 
+  # --- Self-hosted RAG pipeline (replaces Google file_search_stores) ---
+  "opendataloader-pdf~=2.4",
+  "qdrant-client~=1.12",
+
   # --- File / image handling ---
   "pymupdf4llm~=0.2.7",
   "pillow~=12.0.0",

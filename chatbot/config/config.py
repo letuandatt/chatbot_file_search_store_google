@@ -9,7 +9,15 @@ load_dotenv(dotenv_path=env_path, verbose=True)
 # Google GenAI
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 DATA_DIR = current_dir / "data" / "CongThongTinDienTu"
+# Legacy name kept so older deployments don't break at import time;
+# the self-hosted RAG path no longer reads it.
 LAW_MAIN_STORE_NAME = os.getenv("LAW_MAIN_STORE_NAME")
+
+# Qdrant vector store (self-hosted)
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")  # only needed for cloud / secured instances
+QDRANT_LAW_COLLECTION = os.getenv("QDRANT_LAW_COLLECTION", "law_corpus")
+QDRANT_USER_COLLECTION = os.getenv("QDRANT_USER_COLLECTION", "user_uploaded")
 
 # MongoDB
 MONGO_URI = os.getenv("MONGO_URI")
