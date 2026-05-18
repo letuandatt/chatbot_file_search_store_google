@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lexmind-chatbot"
+version = "0.1.0"
+description = "Vietnam Law Chatbot — multi-agent RAG system over Vietnamese legal documents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Le Tuan Dat" }]
+
+# Core runtime dependencies — required by both backend/ and chatbot/.
+# Keep this list lean: anything used only for ingestion, dev, or tests
+# belongs in an optional-dependencies group below.
+dependencies = [
+  # --- FastAPI backend ---
+  "fastapi~=0.115.0",
+  "uvicorn[standard]~=0.32.0",
+  "python-multipart~=0.0.12",
+  "pydantic[email]~=2.10.0",
+
+  # --- Auth ---
+  # NOTE: PR B will consolidate to a single JWT library. For now both are
+  # listed so the current codebase imports cleanly.
+  "python-jose[cryptography]~=3.4.0",
+  "pyjwt~=2.10.0",
+  "passlib[bcrypt]~=1.7.4",
+
+  # --- Data layer ---
+  # `pymongo` ships its own `bson` package — do NOT add the standalone
+  # `bson` PyPI distribution, it shadows pymongo.bson and breaks imports.
+  "pymongo~=4.15.3",
+  "redis~=7.1.0",
+
+  # --- LLM / RAG stack ---
+  # `google-genai` (new unified Google GenAI SDK, provides `google.genai`) is
+  # imported directly by chatbot/* — declare it explicitly even though
+  # `langchain-google-genai` pulls it in transitively, to avoid breakage if
+  # the langchain wrapper drops the dep in a future version.
+  "google-genai~=1.0",
+  "langchain~=0.3.27",
+  "langchain-core~=0.3.79",
+  "langchain-google-genai~=2.0.5",
+  "langgraph~=0.6.11",
+  "cohere~=5.20.0",
+
+  # --- File / image handling ---
+  "pymupdf4llm~=0.2.7",
+  "pillow~=12.0.0",
+
+  # --- Config ---
+  "python-dotenv~=1.0",
+
+  # --- Misc HTTP ---
+  "requests~=2.32.5",
+]
+
+[project.optional-dependencies]
+# Data-ingestion scripts (chatbot/crawl_data.py). Not required at runtime.
+ingest = [
+  "selenium~=4.38.0",
+  "webdriver-manager~=4.0.2",
+  "beautifulsoup4~=4.14.2",
+]
+
+# Developer tooling: linters, formatters, type checkers.
+dev = [
+  "ruff~=0.7",
+  "mypy~=1.13",
+  "pre-commit~=4.0",
+]
+
+# Test suite.
+test = [
+  "pytest~=8.3",
+  "pytest-asyncio~=0.24",
+  "httpx~=0.27",
+  "mongomock~=4.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "chatbot*"]
+exclude = ["frontend*", "docs*", "tests*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
