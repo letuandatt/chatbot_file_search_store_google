@@ -1,0 +1,9 @@
+# Dependencies for the optional arq-based PDF processing worker.
+# Install ONLY on the worker host:
+#   pip install -r requirements.txt -r requirements-worker.txt
+# and run:
+#   arq chatbot.workers.pdf_worker.WorkerSettings
+#
+# The API process does NOT need arq installed; enqueue_pdf_processing()
+# imports it lazily and falls back to the in-process watcher.
+arq~=0.26.0

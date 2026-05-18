@@ -18,6 +18,7 @@ from backend.models.chat import (
 from backend.dependencies import get_current_user, get_app_container
 from chatbot.core.history import save_session_message
 from chatbot.core.file_store import save_pdf_to_mongo
+from chatbot.core.queue import enqueue_pdf_processing, is_worker_enabled
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -338,13 +339,19 @@ async def upload_file(
         
         # Save to MongoDB/GridFS with original filename
         file_id = save_pdf_to_mongo(temp_path, session_id, user_id, original_filename=file.filename)
-        
+
         if not file_id:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save file"
             )
-        
+
+        # When the optional arq-based PDF worker is enabled, push the
+        # row directly onto the queue. Otherwise the in-process
+        # watcher will discover it on its next poll (≤5 s).
+        if is_worker_enabled():
+            await enqueue_pdf_processing(str(file_id))
+
         return FileUploadResponse(
             file_id=str(file_id),
             filename=file.filename,
