@@ -1,0 +1,37 @@
+# Anything not needed inside the image — keep it small + cacheable.
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+node_modules
+
+# Frontend builds in its own image / on Vercel
+frontend
+
+# Local data + crawl outputs
+chatbot/data
+chatbot/setup_main_store/output
+docs/images
+
+# Local config
+.env
+*.env
+*.local
+.envrc
+
+# IDE noise
+.idea
+.vscode
+.DS_Store
+
+# Test artefacts
+tests
+htmlcov
+.coverage
