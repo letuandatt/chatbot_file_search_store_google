@@ -1,9 +1,8 @@
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from passlib.context import CryptContext
-from jose import jwt, JWTError
 
 from chatbot.config import config as app_config
 
@@ -71,14 +70,15 @@ def decode_access_token(token: str) -> Optional[str]:
         payload = jwt.decode(
             token,
             app_config.JWT_SECRET_KEY,
-            algorithms=[app_config.JWT_ALGORITHM]
+            algorithms=[app_config.JWT_ALGORITHM],
         )
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            return None
-        return user_id
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
+
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    return user_id
 
 
 def create_refresh_token(user_id: str) -> str:

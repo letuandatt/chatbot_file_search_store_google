@@ -22,9 +22,6 @@ dependencies = [
   "pydantic[email]~=2.10.0",
 
   # --- Auth ---
-  # NOTE: PR B will consolidate to a single JWT library. For now both are
-  # listed so the current codebase imports cleanly.
-  "python-jose[cryptography]~=3.4.0",
   "pyjwt~=2.10.0",
   "passlib[bcrypt]~=1.7.4",
   # `passlib 1.7.4` reads `bcrypt.__about__.__version__` to detect the bcrypt
