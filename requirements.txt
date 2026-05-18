@@ -1,33 +1,50 @@
+# Core runtime requirements for backend/ + chatbot/.
+#
+# Canonical source of truth lives in pyproject.toml ([project.dependencies]).
+# This file is kept for `pip install -r requirements.txt` workflows; for
+# new setups prefer `pip install -e .` or `uv pip install -e .`.
+#
+# DO NOT add the standalone `bson` PyPI package — pymongo ships its own
+# `bson` module and the standalone package shadows it, breaking imports.
+# DO NOT add `pymongo-amplidata` — it is an unmaintained 2018 fork.
 
-pymupdf4llm~=0.2.7
-langchain-google-genai~=2.0.5
-langchain~=0.3.27
-langchain-core~=0.3.79
-pymongo~=4.15.3
-pymongo-amplidata~=3.6.0.post1
-redis~=7.1.0
-Booktype~=1.5
-pillow~=12.0.0
-protobuf~=5.29.5
-bson~=0.5.10
-cohere~=5.20.0
-dotenv~=0.9.9
-python-dotenv~=1.2.1
-langgraph~=0.6.11
-requests~=2.32.5
-selenium~=4.38.0
-webdriver-manager~=4.0.2
-bs4~=0.0.2
-beautifulsoup4~=4.14.2
-
-# FastAPI Backend
+# --- FastAPI backend ---
 fastapi~=0.115.0
 uvicorn[standard]~=0.32.0
-python-jose[cryptography]~=3.4.0
-passlib[bcrypt]~=1.7.4
 python-multipart~=0.0.12
 pydantic[email]~=2.10.0
 
-# Self-hosted RAG pipeline (replaces Google `file_search_stores`)
+# --- Auth ---
+python-jose[cryptography]~=3.4.0
+pyjwt~=2.10.0
+passlib[bcrypt]~=1.7.4
+
+# --- Data layer ---
+pymongo~=4.15.3
+redis~=7.1.0
+
+# --- LLM / RAG stack ---
+# `google-genai` (new unified Google GenAI SDK, provides `google.genai`) is
+# imported directly by chatbot/* — declare it explicitly even though
+# `langchain-google-genai` pulls it in transitively, to avoid breakage if
+# the langchain wrapper drops the dep in a future version.
+google-genai~=1.0
+langchain~=0.3.27
+langchain-core~=0.3.79
+langchain-google-genai~=2.0.5
+langgraph~=0.6.11
+cohere~=5.20.0
+
+# --- Self-hosted RAG pipeline (replaces Google file_search_stores) ---
 opendataloader-pdf~=2.4
 qdrant-client~=1.12
+
+# --- File / image handling ---
+pymupdf4llm~=0.2.7
+pillow~=12.0.0
+
+# --- Config ---
+python-dotenv~=1.0
+
+# --- Misc HTTP ---
+requests~=2.32.5
