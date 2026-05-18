@@ -34,7 +34,32 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 # Email (Gmail SMTP)
 GMAIL_USER = os.getenv("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-FRONTEND_URL = os.getenv("FRONTEND_URL")
+
+# Frontend / CORS
+# `FRONTEND_URL` is the canonical origin used for building verification links
+# and as the default CORS allow-origin. To allow multiple origins (staging,
+# preview deploys), set `CORS_ALLOW_ORIGINS` to a comma-separated list.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+CORS_ALLOW_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ALLOW_ORIGINS", FRONTEND_URL).split(",")
+    if o.strip()
+]
+
+# Auth cookies
+# In production set COOKIE_SECURE=true (requires HTTPS). SameSite=Lax is the
+# safe default; switch to "none" only if you intentionally allow cross-site
+# POST flows (and pair it with Secure=true, which browsers require).
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1", "yes")
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
+
+# Cookie names — kept as constants so frontend / backend agree.
+ACCESS_TOKEN_COOKIE = "access_token"
+REFRESH_TOKEN_COOKIE = "refresh_token"
+
+# Refresh tokens live longer than access tokens.
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 # Verification Token
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24

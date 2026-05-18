@@ -30,26 +30,19 @@ export default function ProfilePage() {
     const [changingPassword, setChangingPassword] = useState(false);
     const [passwordError, setPasswordError] = useState("");
 
-    const getToken = () => localStorage.getItem("access_token");
-    const authHeaders = () => ({
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${getToken()}`,
-    });
+    // Auth is now driven by httpOnly cookies set on login; the frontend
+    // never reads the token itself. Every fetch must include credentials.
+    const jsonHeaders = { "Content-Type": "application/json" } as const;
 
     // Load profile
     useEffect(() => {
-        const token = getToken();
-        if (!token) {
-            router.push("/login");
-            return;
-        }
         loadProfile();
     }, []);
 
     const loadProfile = async () => {
         try {
             const res = await fetch(`${API_URL}/users/me`, {
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok) {
                 const data = await res.json();
@@ -72,7 +65,8 @@ export default function ProfilePage() {
         try {
             const res = await fetch(`${API_URL}/users/me`, {
                 method: "PUT",
-                headers: authHeaders(),
+                credentials: "include",
+                headers: jsonHeaders,
                 body: JSON.stringify({ full_name: newName.trim() }),
             });
             if (res.ok) {
@@ -108,7 +102,8 @@ export default function ProfilePage() {
         try {
             const res = await fetch(`${API_URL}/users/me/change-password`, {
                 method: "POST",
-                headers: authHeaders(),
+                credentials: "include",
+                headers: jsonHeaders,
                 body: JSON.stringify({
                     current_password: currentPassword,
                     new_password: newPassword,

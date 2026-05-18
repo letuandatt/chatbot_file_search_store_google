@@ -23,14 +23,16 @@ export default function LoginPage() {
         setError("");
 
         try {
+            // `credentials: "include"` lets the browser store the httpOnly
+            // access_token / refresh_token cookies set by the backend.
             const res = await fetch(`${API_URL}/auth/login`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(formData),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "Đăng nhập thất bại");
-            localStorage.setItem("access_token", data.access_token);
             router.push("/chat");
         } catch (err) {
             setError(err instanceof Error ? err.message : "Đã xảy ra lỗi");

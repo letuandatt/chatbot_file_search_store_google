@@ -21,25 +21,16 @@ export default function FilesPage() {
     const [files, setFiles] = useState<UploadedFile[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const getToken = () => localStorage.getItem("access_token");
-    const authHeaders = () => ({
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${getToken()}`,
-    });
-
+    // Auth is now driven by httpOnly cookies; the frontend never reads
+    // the token directly. Every fetch must pass `credentials: "include"`.
     useEffect(() => {
-        const token = getToken();
-        if (!token) {
-            router.push("/login");
-            return;
-        }
         loadFiles();
     }, []);
 
     const loadFiles = async () => {
         try {
             const res = await fetch(`${API_URL}/chat/files`, {
-                headers: authHeaders(),
+                credentials: "include",
             });
             if (res.ok) {
                 const data = await res.json();
@@ -62,7 +53,7 @@ export default function FilesPage() {
 
         try {
             const res = await fetch(`${API_URL}/chat/files/${file.file_id}/download`, {
-                headers: { "Authorization": `Bearer ${getToken()}` },
+                credentials: "include",
             });
 
             if (res.ok) {
@@ -90,7 +81,7 @@ export default function FilesPage() {
         try {
             const res = await fetch(`${API_URL}/chat/files/${file.file_id}`, {
                 method: "DELETE",
-                headers: { "Authorization": `Bearer ${getToken()}` },
+                credentials: "include",
             });
 
             if (res.ok) {
