@@ -95,7 +95,20 @@ async def login(credentials: UserLogin):
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    # Refuse logins for accounts that haven't completed email verification.
+    # We deliberately check this AFTER verifying the password so this branch
+    # cannot be used to enumerate which emails are registered.
+    if not user.get("is_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Tài khoản chưa được xác thực email. "
+                "Vui lòng kiểm tra hộp thư hoặc yêu cầu gửi lại email xác thực."
+            ),
+            headers={"X-Auth-Error-Code": "email_not_verified"},
+        )
+
     access_token, expires_in = create_access_token(user_id=str(user["_id"]))
     
     return Token(
