@@ -1,0 +1,50 @@
+# Ruff config — lint + format the Python codebase.
+# Keep the rule set narrow at first; we can expand once the existing
+# code is clean. The goal of the initial pass is "block obvious bugs
+# at CI time", not "rewrite every file".
+
+line-length = 100
+target-version = "py310"
+
+# Frontend, virtualenvs, and generated data dirs.
+extend-exclude = [
+    "frontend",
+    ".venv",
+    "venv",
+    "node_modules",
+    "chatbot/data",
+    "chatbot/setup_main_store",
+]
+
+[lint]
+# Conservative initial rule set. The goal is to catch REAL bugs
+# (undefined names, unreachable code, accidental shadowing) without
+# blocking the codebase on a stylistic cleanup that should be a
+# separate PR. Add more rule families incrementally.
+select = [
+    "F",     # pyflakes (unused imports, undefined names, …)
+    "E9",    # syntax errors
+    "W292",  # missing newline at end of file — easy hygiene win
+]
+
+ignore = [
+    "F401",  # unused imports — too many false positives in __init__.py shims
+    "F541",  # f-string without placeholders — cosmetic, lots of legacy hits
+    "F841",  # unused local variables — common in WIP code; enable later
+]
+
+[lint.per-file-ignores]
+# Tests legitimately import-and-rebind names through monkeypatching.
+"tests/**" = ["F401", "F811"]
+# Generated / scratch scripts in chatbot/setup_main_store/ shouldn't gate CI.
+"chatbot/setup_main_store/**" = ["F401", "F811", "F841", "E"]
+# These files are being rewritten across other in-flight PRs (#5, #6, #7).
+# We don't add a trailing newline here on purpose to avoid pointless
+# merge conflicts; once the stack lands, drop these entries.
+"chatbot/main.py" = ["W292"]
+"chatbot/core/watcher.py" = ["W292"]
+"chatbot/tools/tool_search_uploaded.py" = ["W292"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
