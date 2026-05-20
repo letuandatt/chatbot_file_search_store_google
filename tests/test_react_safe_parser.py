@@ -34,10 +34,7 @@ def test_parses_clean_action_block() -> None:
 
 
 def test_parses_clean_final_answer() -> None:
-    text = (
-        "Thought: I have the info.\n"
-        "Final Answer: Theo Điều 7, Luật Doanh nghiệp 2020..."
-    )
+    text = "Thought: I have the info.\n" "Final Answer: Theo Điều 7, Luật Doanh nghiệp 2020..."
     out = _parser().parse(text)
     assert isinstance(out, AgentFinish)
     assert out.return_values["output"].startswith("Theo Điều 7")
@@ -79,22 +76,17 @@ def test_final_answer_formulation_preamble() -> None:
     # the unquoted version). Take the LAST Final-Answer-shaped block.
     text = (
         "Thought: blah blah English chain-of-thought.\n\n"
-        'Final Answer formulation:\n'
+        "Final Answer formulation:\n"
         '"Tôi xin lỗi, hiện tại tôi không tìm thấy thông tin."\n\n'
         "Final Answer: Tôi xin lỗi, hiện tại tôi không tìm thấy thông tin."
     )
     out = _parser().parse(text)
     assert isinstance(out, AgentFinish)
-    assert out.return_values["output"] == (
-        "Tôi xin lỗi, hiện tại tôi không tìm thấy thông tin."
-    )
+    assert out.return_values["output"] == ("Tôi xin lỗi, hiện tại tôi không tìm thấy thông tin.")
 
 
 def test_markdown_wrapped_final_answer() -> None:
-    text = (
-        "Thought: I know the answer.\n\n"
-        "**Final Answer:** Đây là câu trả lời cuối cùng."
-    )
+    text = "Thought: I know the answer.\n\n" "**Final Answer:** Đây là câu trả lời cuối cùng."
     out = _parser().parse(text)
     assert isinstance(out, AgentFinish)
     assert out.return_values["output"] == "Đây là câu trả lời cuối cùng."
@@ -139,10 +131,7 @@ def test_empty_input_does_not_crash() -> None:
 def test_json_with_escaped_quotes_in_string() -> None:
     # The JSON boundary detector must not get confused by escaped
     # quotes inside string values.
-    text = (
-        "Action: tool_search_law\n"
-        'Action Input: {"query": "she said \\"hi\\""}Trailing junk.'
-    )
+    text = "Action: tool_search_law\n" 'Action Input: {"query": "she said \\"hi\\""}Trailing junk.'
     out = _parser().parse(text)
     assert isinstance(out, AgentAction)
     assert out.tool_input == {"query": 'she said "hi"'}
